@@ -2,11 +2,6 @@
 logs/
 *.log
 
-# PyInstaller / Build artifacts
-build/
-dist/
-*.spec
-
 # Python
 __pycache__/
 *.py[cod]
@@ -17,4 +12,3 @@ env/
 
 # macOS
 .DS_Store
-ActivityLogger.app/
