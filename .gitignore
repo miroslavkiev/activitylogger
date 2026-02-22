@@ -1,0 +1,20 @@
+# Logs
+logs/
+*.log
+
+# PyInstaller / Build artifacts
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# macOS
+.DS_Store
+ActivityLogger.app/
