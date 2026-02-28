@@ -12,3 +12,7 @@ env/
 
 # macOS
 .DS_Store
+
+# Always track build output (override any parent gitignore)
+!build/
+!dist/
