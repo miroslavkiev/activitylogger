@@ -68,18 +68,20 @@ RE_TIMESTAMP_LINE = re.compile(r"^\*\d{2}:\d{2}:\d{2}\*\s*$")
 RE_FENCE_OPEN = re.compile(r"^```.*$")
 RE_FENCE_CLOSE = re.compile(r"^```[\t ]*$")
 
-# Runs of lines matching these regexes will be compacted when very long (consecutive runs only).
-SPAM_RUN_PATTERNS: List[Tuple[str, str]] = [
-    ("remote.raw stream", r"^\[\d{2}:\d{2}:\d{2}\.\d{3}\]\[I\]\[remote\.raw:\d+\]:\s+Received Raw:\s+\d+"),
-    # meeting detector / bridge spam (often alternates, but still helps for runs)
-    ("DETECTOR/BRIDGE spam", r"^\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+(DETECTOR|BRIDGE)\b.*"),
-]
-
-# Non-consecutive noise lines to REMOVE (outside fences) with per-section summary.
-NOISE_LINE_PATTERNS: List[Tuple[str, str]] = [
+# Shared noise rows reused by section filter + fenced-block filter
+_SHARED_NOISE: List[Tuple[str, str]] = [
     ("DETECTOR/BRIDGE logs", r"^\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+(DETECTOR|BRIDGE)\b.*"),
     ("transcription pipeline status", r"^\s*\[(status|state|pipeline|recorder)\].*"),
     ("objc duplicate class warnings", r"^\s*objc\[\d+\]:\s+Class\s+.*\s+is implemented in both\b.*"),
+]
+
+# Runs of lines matching these regexes will be compacted when very long (consecutive runs only).
+SPAM_RUN_PATTERNS: List[Tuple[str, str]] = [
+    ("remote.raw stream", r"^\[\d{2}:\d{2}:\d{2}\.\d{3}\]\[I\]\[remote\.raw:\d+\]:\s+Received Raw:\s+\d+"),
+]
+
+# Non-consecutive noise lines to REMOVE (outside fences) with per-section summary.
+NOISE_LINE_PATTERNS: List[Tuple[str, str]] = _SHARED_NOISE + [
     ("shell prompt (macOS-Native-Transcription)", r"^\w+@[^ ]+\s+macOS-Native-Transcription\s+%.*"),
     ("python site-packages stacktrace noise", r"^\s*File\s+\".*?/site-packages/.*\".*$"),
     ("warnings.warn", r"^\s*warnings\.warn\(.*$"),
@@ -90,10 +92,7 @@ NOISE_LINE_PATTERNS: List[Tuple[str, str]] = [
 ]
 
 # Noise lines to remove *inside* fenced log-dumps (only for ```text / ```log / ```txt blocks)
-CODEBLOCK_NOISE_PATTERNS: List[Tuple[str, str]] = [
-    ("DETECTOR/BRIDGE logs", r"^\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+(DETECTOR|BRIDGE)\b.*"),
-    ("transcription pipeline status", r"^\s*\[(status|state|pipeline|recorder)\].*"),
-    ("objc duplicate class warnings", r"^\s*objc\[\d+\]:\s+Class\s+.*\s+is implemented in both\b.*"),
+CODEBLOCK_NOISE_PATTERNS: List[Tuple[str, str]] = _SHARED_NOISE + [
     ("remote.raw stream", r"^\[\d{2}:\d{2}:\d{2}\.\d{3}\]\[I\]\[remote\.raw:\d+\]:\s+Received Raw:\s+\d+"),
 ]
 
@@ -171,7 +170,7 @@ def compress_repeated_lines_in_code_block(lines: List[str]) -> List[str]:
             return
         if run > INTRA_BLOCK_REPEAT_THRESHOLD:
             out.append(prev)
-            out.append(INTRA_BLOCK_REPEAT_TEMPLATE.format(count=run) + ("\n" if not prev.endswith("\n") else ""))
+            out.append(INTRA_BLOCK_REPEAT_TEMPLATE.format(count=run) + "\n")
         else:
             out.extend([prev] * run)
         prev = None
@@ -260,9 +259,10 @@ def process_fenced_code_blocks(lines: List[str]) -> List[str]:
         else:
             block_lines.append(ln)
 
-    # Unclosed block: emit as-is but still truncated/cleaned
+    # Unclosed block: still noise-filter / truncate / compress like closed blocks
     if in_block and fence_line is not None:
         processed = [truncate_long_line(x, MAX_PLAINTEXT_LINE_CHARS, PLAINTEXT_LINE_TRUNC_TEMPLATE) for x in block_lines]
+        processed = filter_noise_in_block(processed, fence_line)
         processed = compress_repeated_lines_in_code_block(processed)
         processed = truncate_code_block_content(processed)
         out.append(fence_line + "\n")
@@ -345,18 +345,18 @@ def compress_traceback_blocks(lines: List[str]) -> List[str]:
 
     tb_start = re.compile(r"^\s*Traceback \(most recent call last\):\s*$")
     # A permissive set of “traceback-ish” lines; we stop when content clearly returns to normal log flow.
+    # Continuations only — do not use ultra-broad path/Error matchers that swallow real log lines.
     tb_line = re.compile(
         r"^\s*("
         r"File\s+\".+?\"(, line \d+.*)?|"
         r"(During handling of the above exception|The above exception was the direct cause).*|"
-        r"(requests|httpx)\..*|"
+        r"(requests|httpx)\.[A-Za-z_].*|"
         r"(HfHubHTTPError|Cannot access gated repo|Access to model .* is restricted|It might be because|For more information check:).*|"
         r"visit https?://.*|"
         r"(raise|from)\b.*|"
         r"\^C.*|"
-        r"/(Users|opt)/.*|"
-        r".*Error:.*|"
-        r"\s*"
+        r"[A-Za-z_][\w\.]*Error:.*|"
+        r"[A-Za-z_][\w\.]*Exception:.*"
         r")$"
     )
 

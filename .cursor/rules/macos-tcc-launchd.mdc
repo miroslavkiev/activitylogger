@@ -1,0 +1,40 @@
+---
+description: Mandatory certificate-signed .app rebuild — never leave ad-hoc cdhash builds
+alwaysApply: true
+---
+
+# ActivityLogger macOS TCC + signing (mandatory)
+
+## Runtime
+
+Production capture **must** use `dist/ActivityLoggerNative.app` via Launch Services
+(`start_logger.sh` → `open -W`). Never launchd → Python for pynput on macOS 26+/27.
+
+## After ANY change to the logger binary
+
+If you edit `interleaved_logger.py`, `ActivityLoggerNative.spec`, or otherwise need a
+new `dist/ActivityLoggerNative.app`, you **must** finish with the canonical rebuild:
+
+```bash
+./scripts/rebuild_and_restart.sh
+```
+
+That script: PyInstaller → `scripts/sign_app.sh` → **fail if DR lacks
+`certificate leaf`** → `launchctl kickstart`.
+
+### Never
+
+- Stop after bare `pyinstaller …` (leaves ad-hoc `cdhash` signature)
+- Tell the user to re-grant Accessibility/Input Monitoring after a **certificate-signed**
+  rebuild that reused `ActivityLogger Code Signing`
+- Point the Launch Agent at `/usr/bin/python3` / `interleaved_logger.py` to “fix TCC”
+- Exec `Contents/MacOS/ActivityLoggerNative` from launchd (bypass `open -W`)
+
+### Always
+
+- Prefer `./scripts/rebuild_and_restart.sh` over manual pyinstaller + kickstart
+- After rebuild, confirm: `codesign -d -r- dist/ActivityLoggerNative.app` shows
+  `certificate leaf = H"…"` (not only `cdhash`)
+- First-time machine setup only: user grants TCC once on the **certificate-signed** `.app`
+- Verify capture by growing `daily_log_*.md`, not only “listeners started”
+- Read `docs/MACOS_TCC.md` before changing autostart / permissions / signing

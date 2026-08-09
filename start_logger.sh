@@ -1,24 +1,24 @@
 #!/bin/bash
-# ============================================================
-# Shell wrapper for interleaved_logger.py
-# Використовується Launch Agent-ом для правильного середовища
-# Скрипти живуть у: ~/scripts/activitylogger/
-# ============================================================
+# Launch ActivityLoggerNative.app via Launch Services (open -W).
+# Do not switch this back to python3 — see docs/MACOS_TCC.md.
 
-# --- Критично для launchd: явно встановлюємо змінні середовища ---
-export HOME=/Users/mk
-export USER=mk
-export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+set -euo pipefail
 
-# Шлях до pip --user site-packages (де встановлено pynput, requests)
-export PYTHONPATH=/Users/mk/Library/Python/3.9/lib/python/site-packages
+export HOME="${HOME:-/Users/mk}"
+REPO="${HOME}/scripts/activitylogger"
+APP="${REPO}/dist/ActivityLoggerNative.app"
+LOG_DIR="${REPO}/logs"
 
-# --- Логування старту ---
-LOG_DIR="/Users/mk/scripts/activitylogger/logs"
 mkdir -p "$LOG_DIR"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] start_logger.sh launched" >> "$LOG_DIR/wrapper.log"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Python: $(/usr/bin/python3 --version 2>&1)" >> "$LOG_DIR/wrapper.log"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] PYTHONPATH: $PYTHONPATH" >> "$LOG_DIR/wrapper.log"
+chmod 700 "$LOG_DIR" 2>/dev/null || true
 
-# --- Запуск скрипта ---
-exec /usr/bin/python3 -u /Users/mk/scripts/activitylogger/interleaved_logger.py
+if [[ ! -d "$APP" ]]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] FATAL: missing $APP — run: pyinstaller ActivityLoggerNative.spec --noconfirm" >> "$LOG_DIR/wrapper.log"
+  exit 1
+fi
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] start_logger.sh opening $APP (Launch Services)" >> "$LOG_DIR/wrapper.log"
+
+# -W: wait until the app exits so launchd KeepAlive tracks the real process
+# Do NOT exec the inner MacOS binary directly — TCC attribution breaks.
+exec /usr/bin/open -W "$APP"

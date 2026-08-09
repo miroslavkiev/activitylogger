@@ -1,18 +1,24 @@
-# Logs
+# Logs & runtime
 logs/
 *.log
+.activitylogger.lock
+.codesign/
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
+.venv/
 venv/
 env/
 .env
+.pytest_cache/
 
 # macOS
 .DS_Store
 
-# Always track build output (override any parent gitignore)
-!build/
-!dist/
+# PyInstaller artifacts (rebuild locally; do not commit binaries)
+build/
+dist/
+*.app/
+ActivityLoggerNative

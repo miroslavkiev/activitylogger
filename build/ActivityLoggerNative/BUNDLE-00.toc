@@ -1,3 +1,0 @@
-([('ActivityLoggerNative',
-   '/Users/mk/scripts/activitylogger/dist/ActivityLoggerNative',
-   'EXECUTABLE')],)
