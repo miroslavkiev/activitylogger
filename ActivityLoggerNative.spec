@@ -39,7 +39,7 @@ exe = EXE(
 app = BUNDLE(
     exe,
     name='ActivityLoggerNative.app',
-    icon=None,
+    icon='assets/ActivityLogger.icns',
     bundle_identifier='com.mk.activitylogger.native',
     info_plist={
         'CFBundleShortVersionString': '4.1.0',
