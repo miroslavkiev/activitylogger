@@ -7,10 +7,10 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/bash</string>
-		<string>/Users/mk/scripts/activitylogger/start_logger.sh</string>
+		<string>@REPO@/start_logger.sh</string>
 	</array>
 	<key>WorkingDirectory</key>
-	<string>/Users/mk/scripts/activitylogger</string>
+	<string>@REPO@</string>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
@@ -21,8 +21,8 @@
 	<key>ThrottleInterval</key>
 	<integer>15</integer>
 	<key>StandardOutPath</key>
-	<string>/Users/mk/scripts/activitylogger/logs/launchd-stdout.log</string>
+	<string>@REPO@/logs/launchd-stdout.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/mk/scripts/activitylogger/logs/launchd-stderr.log</string>
+	<string>@REPO@/logs/launchd-stderr.log</string>
 </dict>
 </plist>

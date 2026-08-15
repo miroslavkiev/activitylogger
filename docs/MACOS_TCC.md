@@ -62,6 +62,22 @@ Steps inside:
 
 **Agents must use this script** after logger code changes. Bare `pyinstaller` alone is a process bug.
 
+### Install / replace Launch Agent (paths)
+
+Do not commit a machine-absolute `com.mk.activitylogger.plist`.  
+Use the template and install script:
+
+```bash
+./scripts/install_launch_agent.sh
+launchctl bootout gui/$(id -u)/com.mk.activitylogger 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mk.activitylogger.plist
+launchctl enable gui/$(id -u)/com.mk.activitylogger
+launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger
+```
+
+`start_logger.sh` resolves the repo from its own directory (or `ACTIVITYLOGGER_REPO`).  
+Optional capture config: `~/.config/activitylogger/config.toml` (see `config.example.toml`).
+
 ### First-time TCC (once per machine / once per new signing cert)
 
 1. Run `./scripts/rebuild_and_restart.sh` so the `.app` is certificate-signed
@@ -70,6 +86,27 @@ Steps inside:
 4. Type something; within ~30s `daily_log_*.md` should grow
 
 After that, certificate-signed rebuilds with the **same** cert should **not** need TCC refresh.
+
+### Optional Automation (browser URL capture only)
+
+Base capture needs **Accessibility** + **Input Monitoring** only.
+Default config keeps `features.browser_url_capture = false`. With the flag OFF, the logger
+does **not** send Apple Events for URL read and should not prompt for Automation.
+
+When `features.browser_url_capture = true` and the Apple Events path runs,
+macOS may ask for **Automation** so ActivityLoggerNative can control Safari /
+Chrome / other scriptable browsers.
+
+1. Set `features.browser_url_capture = true` in `~/.config/activitylogger/config.toml`
+2. Rebuild/restart if the binary changed (`./scripts/rebuild_and_restart.sh`), else kickstart
+3. Bring the browser to front; approve Automation prompts when shown
+   (System Settings → Privacy & Security → **Automation** → ActivityLoggerNative)
+4. Navigate to a new URL; within ~ one `window_check_sec`, the daily log gains a
+   `> [URL]:` line
+
+AX-only success for a browser may avoid an Automation prompt for that browser.
+Chrome-family capture often needs Automation.
+Screen Recording is **not** required and must not be used for URL capture.
 
 ### Verify signing (after every rebuild)
 

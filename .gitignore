@@ -4,6 +4,9 @@ logs/
 .activitylogger.lock
 .codesign/
 
+# Operator-local config (use config.example.toml)
+config.toml
+
 # Python
 __pycache__/
 *.py[cod]

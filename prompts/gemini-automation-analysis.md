@@ -12,8 +12,19 @@ You are analyzing my **work activity logs** from the past week to suggest automa
 - A title: `# Work Log — YYYY-MM-DD`
 - Sections with:
   - `## App — Window title` (active app and window)
-  - `*HH:MM:SS*` (time)
+  - `*HH:MM:SS*` (time), optionally followed by ` · trigger:{name}` on the same italic line when capture-trigger metadata is enabled
+  - Closed trigger names (when present) and meanings:
+    - `app_switch` — prior section sealed because the active app/window heading changed
+    - `click` — prior open buffer sealed because a mouse click was logged
+    - `clipboard` — prior open buffer sealed because a clipboard change was logged
+    - `file_flush` — open buffer sealed by periodic or shutdown file flush
+    - `url_change` — sealed because the browser URL-change path sealed the buffer
+    - `scroll_coalesce` — sealed for a coalesced scroll summary
+    - `typing_pause` — reserved; unused in current typing-pause mode (keys move into events only; no section seal)
+  - Older logs and runs with triggers disabled may omit `trigger:` — do not invent triggers for those sections
+  - Use triggers when present to explain context switches and burst boundaries
   - Events: keystrokes, hotkeys like `[CMD+C]`, `[ENTER]`, `[TAB]`, typed text, clipboard snippets, mouse clicks (with element roles when available), and sometimes visible screen text. Sections are separated by `---`.
+  - Optional browser lines: `> [URL]: https://…` when URL capture is enabled.
 
 **What to do:**
 

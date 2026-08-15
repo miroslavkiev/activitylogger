@@ -5,7 +5,7 @@ Records active windows, keystrokes, clicks, screen text, and clipboard into dail
 **Version:** 4.1.0 · **Runtime:** `dist/ActivityLoggerNative.app` · **Docs:** [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md) · [`AGENTS.md`](AGENTS.md)
 
 ## Features
-- ActivityWatch window titles (frontmost-app fallback)
+- Native window titles (NSWorkspace + Accessibility); optional ActivityWatch enricher
 - Keystrokes / hotkeys, AX clicks, periodic screen text, clipboard (plaintext when not paused)
 - Privacy pause for password managers / AX secure fields; clipboard during pause is not logged later
 
@@ -22,13 +22,14 @@ pip install -r requirements.txt
 2. Install agent if needed:
 
 ```bash
-cp com.mk.activitylogger.plist ~/Library/LaunchAgents/
+./scripts/install_launch_agent.sh
 launchctl bootout gui/$(id -u)/com.mk.activitylogger 2>/dev/null || true
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mk.activitylogger.plist
+launchctl enable gui/$(id -u)/com.mk.activitylogger
 launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger
 ```
 
-Do not also add the same app as a Login Item. Put ActivityWatch in Login Items if you want titles after reboot.
+Do not also add the same app as a Login Item. ActivityWatch is optional (fills empty titles only when `window_titles.activitywatch_enricher` is true).
 
 ## After editing code
 

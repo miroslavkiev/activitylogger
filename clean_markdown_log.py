@@ -62,7 +62,10 @@ TRACEBACK_TRUNC_TEMPLATE = "... [Truncated {removed} traceback/error lines to sa
 # ----------------------------
 
 RE_SECTION_HEADER = re.compile(r"^##\s+.+\S.*$")
-RE_TIMESTAMP_LINE = re.compile(r"^\*\d{2}:\d{2}:\d{2}\*\s*$")
+# Legacy: *HH:MM:SS*  |  F5: *HH:MM:SS · trigger:{name}*
+RE_TIMESTAMP_LINE = re.compile(
+    r"^\*\d{2}:\d{2}:\d{2}(?: · trigger:[a-z][a-z0-9_]*)?\*\s*$"
+)
 
 # Fences: open is any ```..., close must be bare ```
 RE_FENCE_OPEN = re.compile(r"^```.*$")
@@ -133,6 +136,19 @@ def is_event_candidate_line(line: str) -> bool:
     if is_fence_open(line):
         return False
     return True
+
+
+def is_url_event_line(line: str) -> bool:
+    """F4 stable token: leave ``> [URL]: …`` intact (no plaintext truncation)."""
+    core = line[:-1] if line.endswith("\n") else line
+    return core.startswith("> [URL]: ")
+
+
+def truncate_plaintext_line(line: str) -> str:
+    """Truncate long plaintext; preserve F4 URL event lines unchanged."""
+    if is_url_event_line(line):
+        return line if line.endswith("\n") else line + "\n"
+    return truncate_long_line(line, MAX_PLAINTEXT_LINE_CHARS, PLAINTEXT_LINE_TRUNC_TEMPLATE)
 
 
 def truncate_long_line(line: str, max_chars: int, marker_template: str) -> str:
@@ -318,18 +334,18 @@ def compress_spam_runs(lines: List[str]) -> List[str]:
         label = match_label(ln.rstrip("\n"))
         if label is None:
             flush()
-            out.append(truncate_long_line(ln, MAX_PLAINTEXT_LINE_CHARS, PLAINTEXT_LINE_TRUNC_TEMPLATE))
+            out.append(truncate_plaintext_line(ln))
             continue
 
         if run_label is None:
             run_label = label
-            run_lines = [truncate_long_line(ln, MAX_PLAINTEXT_LINE_CHARS, PLAINTEXT_LINE_TRUNC_TEMPLATE)]
+            run_lines = [truncate_plaintext_line(ln)]
         elif run_label == label:
-            run_lines.append(truncate_long_line(ln, MAX_PLAINTEXT_LINE_CHARS, PLAINTEXT_LINE_TRUNC_TEMPLATE))
+            run_lines.append(truncate_plaintext_line(ln))
         else:
             flush()
             run_label = label
-            run_lines = [truncate_long_line(ln, MAX_PLAINTEXT_LINE_CHARS, PLAINTEXT_LINE_TRUNC_TEMPLATE)]
+            run_lines = [truncate_plaintext_line(ln)]
 
     flush()
     return out
@@ -478,7 +494,7 @@ def dedupe_consecutive_event_lines(lines: List[str]) -> List[str]:
 
     for line in lines:
         ln = line if line.endswith("\n") else line + "\n"
-        ln = truncate_long_line(ln, MAX_PLAINTEXT_LINE_CHARS, PLAINTEXT_LINE_TRUNC_TEMPLATE)
+        ln = truncate_plaintext_line(ln)
 
         if is_blank(ln):
             if pending_line is not None:

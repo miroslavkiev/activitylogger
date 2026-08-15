@@ -1,0 +1,38 @@
+# ActivityLogger capture config (F2) — defaults
+# Copy to ~/.config/activitylogger/config.toml and edit as needed.
+# chmod 700 ~/.config/activitylogger && chmod 600 ~/.config/activitylogger/config.toml
+
+[paths]
+log_dir = "~/scripts/activitylogger/logs"
+
+[timing]
+window_check_sec = 5
+flush_interval_sec = 30
+typing_pause_sec = 0.5
+secure_field_cache_sec = 0.35
+diag_min_interval_sec = 30.0
+
+[privacy]
+secure_apps = [
+  "1password",
+  "bitwarden",
+  "keychain",
+  "keepass",
+  "lastpass",
+  "passwords",
+]
+
+[ax]
+ax_queue_maxsize = 16
+ax_max_depth = 7
+screen_compare_max_chars = 4000
+
+[window_titles]
+activitywatch_enricher = true
+activitywatch_base_url = "http://localhost:5600"
+
+[features]
+browser_url_capture = false
+capture_triggers_enabled = false
+scroll_coalesce_enabled = false
+scroll_coalesce_ms = 400

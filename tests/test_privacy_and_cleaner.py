@@ -31,6 +31,18 @@ def _reset_logger_state():
         il._secure_field_cache_at = 0.0
         il._window_bucket = None
         il._scan_pending = False
+        il._last_key_activity_mono = None
+        il._last_key_flush_cause = None
+        il._key_flush_hook = None
+    # Keep privacy baseline after config injection tests
+    il.SECURE_APPS = {
+        "1password",
+        "bitwarden",
+        "keychain",
+        "keepass",
+        "lastpass",
+        "passwords",
+    }
     # Drain AX queue
     while True:
         try:
