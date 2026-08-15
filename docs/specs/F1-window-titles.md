@@ -1,11 +1,11 @@
 # F1 — Native-first window titles (ActivityWatch optional)
 
-**Status:** draft spec (TDD), critic-revised  
+**Status:** Implemented (F1_ACCEPT; FINAL_ACCEPT)  
 **Priority:** P0  
 **Scope contract:** [`00-SCOPE.md`](00-SCOPE.md)  
 **Constraint contract:** [`F0-constraints-and-non-goals.md`](F0-constraints-and-non-goals.md)  
 **Depends on:** none for behavior. F2 owns `config.toml` load and schema. F1 uses only the `[window_titles]` keys reserved in F2.  
-**Related code today:** `get_active_window()`, `get_frontmost_app_name()`, `window_checker_loop()`, `_is_secure_app_name()` in `interleaved_logger.py`  
+**Related code:** `get_native_window()`, `get_active_window()`, `merge_native_and_aw()`, `window_checker_loop()`, `_is_secure_app_name()` in `interleaved_logger.py` / `window_titles.py`  
 **Gemini contract:** `prompts/gemini-automation-analysis.md` expects `## App — Window title`
 
 ---
@@ -18,24 +18,26 @@ Section headings stay `## {app} — {title}` (em dash `U+2014`). Secure-app paus
 
 ---
 
-## 2. Problem / current behavior
+## 2. Problem / previous behavior (before F1)
 
-Today the logger treats ActivityWatch as the primary title source.
+Before F1, the logger treated ActivityWatch as the primary title source.
 
-| Fact | Location |
+| Fact | Location (pre-F1) |
 |------|----------|
-| `get_active_window()` only calls ActivityWatch HTTP (`AW_BASE_URL`, default `http://localhost:5600`) | `interleaved_logger.py` ~233–254 |
-| On AW failure it returns `("", "")` | same |
-| `get_frontmost_app_name()` already uses `NSWorkspace` `localizedName` | ~176–186 |
-| `window_checker_loop()` calls AW first; if `app` is empty it falls back to frontmost name only | ~502–508 |
-| If `title` is empty it substitutes `AW_HINT` = `"(ActivityWatch not running; start ActivityWatch for window titles)"` | ~54–55, ~508 |
-| Headings are `{app} — {title}`; flush writes `## {heading}` | ~513–515, ~625 |
-| Secure-app pause uses `_is_secure_app_name(app, title)` against `SECURE_APPS` substrings in app **or** title | ~52, ~155–158, ~510 |
-| Startup diag messages say “ActivityWatch OK / unavailable” | ~676–688 |
-| README lists AW as the window-title path and tells users to put AW in Login Items for titles | `README.md` |
-| No unit tests cover native title resolution or resolve order | `tests/` |
+| `get_active_window()` only called ActivityWatch HTTP (`AW_BASE_URL`, default `http://localhost:5600`) | `interleaved_logger.py` |
+| On AW failure it returned `("", "")` | same |
+| `get_frontmost_app_name()` already used `NSWorkspace` `localizedName` | same |
+| `window_checker_loop()` called AW first; if `app` was empty it fell back to frontmost name only | same |
+| If `title` was empty it substituted `AW_HINT` = `"(ActivityWatch not running; start ActivityWatch for window titles)"` | same |
+| Headings were `{app} — {title}`; flush wrote `## {heading}` | same |
+| Secure-app pause used `_is_secure_app_name(app, title)` against `SECURE_APPS` substrings in app **or** title | same |
+| Startup diag messages said “ActivityWatch OK / unavailable” | same |
+| README listed AW as the window-title path | `README.md` |
+| No unit tests covered native title resolution or resolve order | `tests/` |
 
-Result: without ActivityWatch, titles become a hint string, not a real window title. App name alone is not enough for useful Markdown sections or for title-based secure matches (example: Safari with “Bitwarden — Login”).
+Result: without ActivityWatch, titles became a hint string, not a real window title. App name alone was not enough for useful Markdown sections or for title-based secure matches (example: Safari with “Bitwarden — Login”).
+
+**Current (post-F1):** native resolve first; AW enricher optional via `window_titles.activitywatch_enricher`. Empty title uses `Unknown window`. No `AW_HINT` in headings.
 
 There is no Screen Recording / OCR path in scope ([`00-SCOPE.md`](00-SCOPE.md) ignored list). Native titles use Accessibility already required for capture.
 
@@ -206,9 +208,9 @@ typed text here
 ---
 ```
 
-### Without ActivityWatch (changed vs today)
+### Without ActivityWatch (required behavior)
 
-**Today (bad):**
+**Before F1 (bad):**
 
 ```markdown
 ## Safari — (ActivityWatch not running; start ActivityWatch for window titles)
@@ -230,7 +232,7 @@ typed text here
 
 Replace AW-centric `FALLBACK_HEADING`:
 
-- Today: `Unknown — (ActivityWatch not running; start ActivityWatch for window titles)`
+- Before F1: `Unknown — (ActivityWatch not running; start ActivityWatch for window titles)`
 - After F1: `Unknown — Unknown window`
 
 ---
@@ -244,9 +246,9 @@ F2 owns discovery, load, and validation of `config.toml`. F1 does **not** invent
 | TOML key | Type | Default | Meaning for F1 |
 |----------|------|---------|----------------|
 | `window_titles.activitywatch_enricher` | bool | `true` | When true, try AW to fill empty app/title after native |
-| `window_titles.activitywatch_base_url` | string | `http://localhost:5600` | AW API base (today’s `AW_BASE_URL`) |
+| `window_titles.activitywatch_base_url` | string | `http://localhost:5600` | AW API base (legacy `AW_BASE_URL`) |
 
-Until F2 lands, implementation may keep module-level constants with the **same semantics** (`activitywatch_enricher`, `activitywatch_base_url` / `AW_BASE_URL`). Do not create a second config file format.
+F2 loads these keys from `~/.config/activitylogger/config.toml`. Do not create a second config file format.
 
 ### Conflict rules
 

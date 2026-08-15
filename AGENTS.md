@@ -7,6 +7,21 @@ Never launchd → Python for pynput on macOS 26+/27.
 
 Full guide: [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md)
 
+## Config (operator)
+
+```bash
+mkdir -p ~/.config/activitylogger
+cp config.example.toml ~/.config/activitylogger/config.toml
+chmod 700 ~/.config/activitylogger
+chmod 600 ~/.config/activitylogger/config.toml
+```
+
+Edit feature flags in `~/.config/activitylogger/config.toml`.
+
+- **Config-only change:** `launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger`  
+  Do **not** run a full rebuild for config edits.
+- **Logger source change:** `./scripts/rebuild_and_restart.sh`
+
 ## After code changes (mandatory)
 
 ```bash

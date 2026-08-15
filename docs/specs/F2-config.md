@@ -1,10 +1,11 @@
 # F2 — Config file for paths and tunables (TDD)
 
-**Status:** Spec only (no implementation in this change)  
+**Status:** Implemented (F2_ACCEPT; FINAL_ACCEPT)  
 **Priority:** P0  
 **Scope contract:** [`00-SCOPE.md`](00-SCOPE.md)  
 **Depends on / coordinates with:** F1, F3–F6 (F2 owns key names; other specs must use this schema)  
-**F0:** Keep TCC launch chain, Markdown-only logs, and privacy pause.
+**F0:** Keep TCC launch chain, Markdown-only logs, and privacy pause.  
+**Example scaffold:** repo-root [`config.example.toml`](../../config.example.toml) (human schema copy of `default_config()`; link this file instead of pasting the full TOML again).
 
 ---
 
@@ -23,25 +24,25 @@ Config is read once at process start. After a config edit, restart the agent (ki
 
 ---
 
-## 2. Problem / current behavior
+## 2. Problem / previous behavior (before F2)
 
-| Area | Current behavior |
-|------|------------------|
-| Log directory | `_resolve_log_dir()` always uses `$HOME/scripts/activitylogger/logs` |
+| Area | Previous behavior |
+|------|-------------------|
+| Log directory | `_resolve_log_dir()` always used `$HOME/scripts/activitylogger/logs` |
 | Tunables | Module constants in `interleaved_logger.py` |
 | Secure apps | Hard-coded set of name substrings |
 | AX text walk | Hard-coded max depth `7` in `extract_text` |
-| Launch wrapper | `start_logger.sh` sets `REPO="${HOME}/scripts/activitylogger"` and `HOME` fallback `/Users/mk` |
-| Launch Agent | `com.mk.activitylogger.plist` embeds absolute `/Users/mk/scripts/activitylogger` paths |
+| Launch wrapper | `start_logger.sh` set `REPO="${HOME}/scripts/activitylogger"` and `HOME` fallback `/Users/mk` |
+| Launch Agent | `com.mk.activitylogger.plist` embedded absolute `/Users/mk/scripts/activitylogger` paths |
 | Cleaner | Separate tunables in `clean_markdown_log.py` (out of F2) |
 | Feature roadmap | No stable keys for F1 / F3–F6 |
 
-Problems:
+Problems that F2 solved:
 
-1. Rebuild or repo move needs code or plist edits.
-2. Tunable changes need a certificate-signed rebuild for production.
-3. Other machines cannot reuse the checked-in Launch Agent plist.
-4. F1–F6 need stable config keys before those features land.
+1. Rebuild or repo move needed code or plist edits.
+2. Tunable changes needed a certificate-signed rebuild for production.
+3. Other machines could not reuse a checked-in Launch Agent plist.
+4. F1–F6 needed stable config keys.
 
 ---
 
@@ -106,10 +107,11 @@ Config SHALL cover exactly the key groups in §6 (no extra product surfaces).
 | Key group | Purpose |
 |-----------|---------|
 | `paths.log_dir` | Daily Markdown + in-app diagnostics + instance lock |
-| `timing.*` | Poll / flush / cache / diag intervals |
+| `timing.*` | Poll / flush / cache / diag / secure-app keypress intervals |
 | `privacy.secure_apps` | Substring list for secure-app pause |
-| `ax.*` | AX worker and text-walk limits |
-| `window_titles.*` | F1 ActivityWatch enricher |
+| `ax.*` | AX worker, text-walk limits, scan debounce |
+| `window_titles.*` | F1 ActivityWatch enricher + backoff |
+| `buffers.*` | Soft in-memory buffer caps |
 | `features.*` | F4 / F5 / F6 flags and tunables |
 
 F5 uses `features.capture_triggers_enabled` (default `false`).  
@@ -209,10 +211,11 @@ log_dir = "~/scripts/activitylogger/logs"
 [timing]
 window_check_sec = 5
 flush_interval_sec = 30
-# F3 — typing idle before burst flush (unused until F3)
+# F3 — typing idle before burst flush
 typing_pause_sec = 0.5
 secure_field_cache_sec = 0.35
 diag_min_interval_sec = 30.0
+secure_app_check_sec = 0.15
 
 [privacy]
 # Substrings matched against lowercased app name and window title
@@ -229,18 +232,26 @@ secure_apps = [
 ax_queue_maxsize = 16
 ax_max_depth = 7
 screen_compare_max_chars = 4000
+ax_max_children = 40
+ax_scan_debounce_sec = 3.0
 
 [window_titles]
 # F1 — ActivityWatch optional enricher (native titles first)
 activitywatch_enricher = true
 activitywatch_base_url = "http://localhost:5600"
+aw_backoff_sec = 45.0
+
+[buffers]
+max_keystrokes = 2000
+max_events = 500
+max_sections = 200
 
 [features]
-# F4 — optional browser URL capture (off until F4 ships)
+# F4 — optional browser URL capture
 browser_url_capture = false
 # F5 — capture-trigger metadata + click/clipboard seals (opt-in)
 capture_triggers_enabled = false
-# F6 — scroll coalescing (off until F6 ships)
+# F6 — scroll coalescing
 scroll_coalesce_enabled = false
 scroll_coalesce_ms = 400
 ```
@@ -252,15 +263,22 @@ scroll_coalesce_ms = 400
 | `paths.log_dir` | `_resolve_log_dir()` | `$HOME/scripts/activitylogger/logs` |
 | `timing.window_check_sec` | `WINDOW_CHECK_SEC` | `5` |
 | `timing.flush_interval_sec` | `FLUSH_INTERVAL_SEC` | `30` |
-| `timing.typing_pause_sec` | F3 (not used yet) | `0.5` |
+| `timing.typing_pause_sec` | F3 | `0.5` |
 | `timing.secure_field_cache_sec` | `SECURE_FIELD_CACHE_SEC` | `0.35` |
 | `timing.diag_min_interval_sec` | `_DIAG_MIN_INTERVAL` | `30.0` |
+| `timing.secure_app_check_sec` | keypress secure-app throttle | `0.15` |
 | `privacy.secure_apps` | `SECURE_APPS` | list in §6.1 |
 | `ax.ax_queue_maxsize` | `AX_QUEUE_MAXSIZE` | `16` |
-| `ax.ax_max_depth` | hard-coded `depth > 7` | `7` |
+| `ax.ax_max_depth` | `AX_MAX_DEPTH` | `7` |
 | `ax.screen_compare_max_chars` | `SCREEN_COMPARE_MAX_CHARS` | `4000` |
-| `window_titles.activitywatch_enricher` | F1; today AW always attempted | `true` |
+| `ax.ax_max_children` | AX walk fan-out cap | `40` |
+| `ax.ax_scan_debounce_sec` | scan debounce | `3.0` |
+| `window_titles.activitywatch_enricher` | F1; native first | `true` |
 | `window_titles.activitywatch_base_url` | `AW_BASE_URL` | `http://localhost:5600` |
+| `window_titles.aw_backoff_sec` | AW failure backoff | `45.0` |
+| `buffers.max_keystrokes` | soft cap before force flush | `2000` |
+| `buffers.max_events` | soft cap before force flush | `500` |
+| `buffers.max_sections` | soft cap before force flush | `200` |
 | `features.browser_url_capture` | F4 | `false` |
 | `features.capture_triggers_enabled` | F5 | `false` |
 | `features.scroll_coalesce_enabled` | F6 | `false` |
@@ -522,10 +540,10 @@ Target module ideas: `activitylogger_config.py` or `config.py` next to the logge
 
 ## 11. Migration plan for existing install
 
-1. **Ship code** that loads XDG config with defaults identical to today (behavior-neutral).
+1. **Ship code** that loads XDG config with defaults identical to pre-F2 constants (behavior-neutral).
 2. **Scaffold (optional):**  
-   `mkdir -p ~/.config/activitylogger && cp docs/examples/config.default.toml ~/.config/activitylogger/config.toml && chmod 700 ~/.config/activitylogger && chmod 600 ~/.config/activitylogger/config.toml`  
-   (create the example file during implementation.)
+   `mkdir -p ~/.config/activitylogger && cp config.example.toml ~/.config/activitylogger/config.toml && chmod 700 ~/.config/activitylogger && chmod 600 ~/.config/activitylogger/config.toml`  
+   (scaffold lives at repo root: `config.example.toml`.)
 3. **Rebuild** with `./scripts/rebuild_and_restart.sh` so the signed app includes the loader.
 4. **Replace Launch Agent paths:**
    - `launchctl bootout gui/$(id -u)/com.mk.activitylogger` (or unload equivalent).
@@ -556,7 +574,7 @@ Rollback: remove or rename `config.toml`, restart agent → defaults restore pri
 
 ## 13. Implementation notes (high-level)
 
-Do not implement in the spec phase. When implementing:
+Implemented. Historical build order for maintainers:
 
 1. Add a pure `load_config` / `AppConfig` dataclass module with validation; no pynput imports.
 2. Write §10 tests first; confirm they fail.
@@ -567,6 +585,7 @@ Do not implement in the spec phase. When implementing:
 7. Document config path and install steps in `docs/MACOS_TCC.md` (short section) and `AGENTS.md` pointer.
 8. Do **not** change the Launch Services `open -W` chain.
 9. After Python changes that ship in the app: `./scripts/rebuild_and_restart.sh`, verify `certificate leaf` in designated requirement, smoke-check log growth.
+10. After **config-only** edits: `launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger` (no full rebuild).
 
 ---
 

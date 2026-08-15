@@ -11,6 +11,7 @@ flush_interval_sec = 30
 typing_pause_sec = 0.5
 secure_field_cache_sec = 0.35
 diag_min_interval_sec = 30.0
+secure_app_check_sec = 0.15
 
 [privacy]
 secure_apps = [
@@ -26,10 +27,18 @@ secure_apps = [
 ax_queue_maxsize = 16
 ax_max_depth = 7
 screen_compare_max_chars = 4000
+ax_max_children = 40
+ax_scan_debounce_sec = 3.0
 
 [window_titles]
 activitywatch_enricher = true
 activitywatch_base_url = "http://localhost:5600"
+aw_backoff_sec = 45.0
+
+[buffers]
+max_keystrokes = 2000
+max_events = 500
+max_sections = 200
 
 [features]
 browser_url_capture = false

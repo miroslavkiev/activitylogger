@@ -1,6 +1,6 @@
 # F0 — Cross-cutting constraints and non-goals
 
-**Status:** locked constraints; F0 guard tests in §7.2 are required before F1–F6 implementation merges  
+**Status:** locked constraints (F0_ACCEPT; FINAL_ACCEPT). F0 guard tests in §7.2 stay required for regressions.  
 **Date:** 2026-08-15  
 **Parent:** [`00-SCOPE.md`](00-SCOPE.md)  
 **Audience:** feature authors, implementers, reviewers
@@ -15,7 +15,7 @@ F0 locks:
 - Privacy and TCC regression gates
 
 A feature that breaks any requirement here is out of contract.  
-Do not add product work here. Put product work in F1–F6 only after `00-SCOPE.md` allows it.
+Do not add product work here. Put product work in F1–F6 only.
 
 ---
 

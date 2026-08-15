@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import queue
 import re
-from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -12,63 +10,17 @@ import pytest
 
 import interleaved_logger as il
 import scroll_coalesce as sc
-from config import default_config
+from tests.helpers import enable_features
 
 
 @pytest.fixture(autouse=True)
-def _reset_logger_state(tmp_path: Path):
-    cfg = replace(
-        default_config(),
-        log_dir=tmp_path / "logs",
+def _reset_logger_state(reset_logger_state):
+    reset_logger_state(
         scroll_coalesce_enabled=False,
         scroll_coalesce_ms=400,
         capture_triggers_enabled=False,
     )
-    il.apply_config(cfg)
-    with il._lock:
-        il._current_heading = "App — Window"
-        il._current_keystrokes.clear()
-        il._current_events.clear()
-        il._sections.clear()
-        il._last_screen_text = ""
-        il._last_clipboard_count = 0
-        il._last_clipboard_text = ""
-        il._pause_secure_app = False
-        il._pause_secure_field = False
-        il._is_paused = False
-        il._current_modifiers.clear()
-        il._secure_field_cache = False
-        il._secure_field_cache_at = 0.0
-        il._window_bucket = None
-        il._scan_pending = False
-        il._last_key_activity_mono = None
-        il._last_key_flush_cause = None
-        il._key_flush_hook = None
-        il._scroll_burst = None
-        il._scroll_diag_emitted = False
-    while True:
-        try:
-            il._ax_jobs.get_nowait()
-            il._ax_jobs.task_done()
-        except queue.Empty:
-            break
     yield
-
-
-def _enable_scroll(
-    tmp_path: Path,
-    *,
-    coalesce_ms: int = 400,
-    triggers: bool = False,
-) -> None:
-    cfg = replace(
-        default_config(),
-        log_dir=tmp_path / "logs",
-        scroll_coalesce_enabled=True,
-        scroll_coalesce_ms=coalesce_ms,
-        capture_triggers_enabled=triggers,
-    )
-    il.apply_config(cfg)
 
 
 def _feed_scrolls(
@@ -111,7 +63,7 @@ def test_T_F6_01_default_off_ignores_scrolls(tmp_path: Path):
 
 
 def test_T_F6_02_rapid_scroll_coalesces_to_one_note(tmp_path: Path):
-    _enable_scroll(tmp_path, coalesce_ms=400, triggers=True)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=400, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "Safari — Docs"
     _feed_scrolls(40, dy=-1.0, start=0.0, step=0.005)
@@ -131,7 +83,7 @@ def test_T_F6_02_rapid_scroll_coalesces_to_one_note(tmp_path: Path):
 
 def test_T_F6_02b_f5_off_seals_without_trigger(tmp_path: Path):
     """F5 OFF: still seal one section; no trigger field (FR-F6-004 / closed decision)."""
-    _enable_scroll(tmp_path, coalesce_ms=50, triggers=False)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=50)
     with il._lock:
         il._current_heading = "Safari — Docs"
     _feed_scrolls(12, dy=-1.0, start=0.0, step=0.001)
@@ -150,7 +102,7 @@ def test_T_F6_02b_f5_off_seals_without_trigger(tmp_path: Path):
 
 
 def test_T_F6_03_quiet_period_resets_on_each_tick(tmp_path: Path):
-    _enable_scroll(tmp_path, coalesce_ms=400, triggers=True)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=400, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "Safari — Docs"
     il.on_scroll_tick(dx=0, dy=-1, now=0.0, app="Safari", heading="Safari — Docs")
@@ -170,7 +122,7 @@ def test_T_F6_03_quiet_period_resets_on_each_tick(tmp_path: Path):
 
 
 def test_T_F6_04_pause_discards_burst(tmp_path: Path):
-    _enable_scroll(tmp_path, coalesce_ms=100, triggers=True)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=100, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "Safari — Docs"
     _feed_scrolls(10, start=0.0, step=0.01)
@@ -197,7 +149,7 @@ def test_T_F6_04_pause_discards_burst(tmp_path: Path):
 
 
 def test_T_F6_05_app_switch_flushes_prior_section(tmp_path: Path):
-    _enable_scroll(tmp_path, coalesce_ms=400, triggers=True)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=400, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "AppA — TitleA"
     _feed_scrolls(5, app="AppA", heading="AppA — TitleA", start=0.0)
@@ -225,7 +177,7 @@ def test_T_F6_05_app_switch_flushes_prior_section(tmp_path: Path):
 
 
 def test_T_F6_06_no_mouse_move_side_effects(tmp_path: Path):
-    _enable_scroll(tmp_path, coalesce_ms=100)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=100)
     # Simulated moves only — no scroll API
     il.on_mouse_move_stub(1.0, 2.0)
     il.check_scroll_coalesce_idle(now=1.0)
@@ -238,9 +190,7 @@ def test_T_F6_06_no_mouse_move_side_effects(tmp_path: Path):
     assert "on_scroll" in kwargs
     assert "on_click" in kwargs
     # Default off: no on_scroll
-    il.apply_config(
-        replace(default_config(), log_dir=tmp_path / "logs", scroll_coalesce_enabled=False)
-    )
+    enable_features(tmp_path, scroll_coalesce_enabled=False)
     kwargs_off = il.mouse_listener_kwargs_for_config()
     assert "on_scroll" not in kwargs_off
     assert "on_move" not in kwargs_off
@@ -250,7 +200,7 @@ def test_T_F6_06_no_mouse_move_side_effects(tmp_path: Path):
 
 
 def test_T_F6_07_f5_trigger_name_scroll_coalesce(tmp_path: Path):
-    _enable_scroll(tmp_path, coalesce_ms=50, triggers=True)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=50, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "Safari — Docs"
     _feed_scrolls(4, start=0.0, step=0.001)
@@ -268,7 +218,7 @@ def test_T_F6_07_f5_trigger_name_scroll_coalesce(tmp_path: Path):
 
 
 def test_T_F6_08_flush_while_paused_appends_nothing(tmp_path: Path):
-    _enable_scroll(tmp_path, coalesce_ms=50, triggers=True)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=50, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "Safari — Docs"
     _feed_scrolls(8, start=0.0)
@@ -303,7 +253,7 @@ def test_T_F6_09_format_contract():
 
 
 def test_T_F6_10_scroll_delivery_failure_soft(tmp_path: Path, monkeypatch):
-    _enable_scroll(tmp_path, coalesce_ms=100, triggers=True)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=100, capture_triggers_enabled=True)
     diags: list[str] = []
 
     def fake_listener(**kwargs):
@@ -333,7 +283,7 @@ def test_T_F6_10_scroll_delivery_failure_soft(tmp_path: Path, monkeypatch):
 
 
 def test_T_F6_11_shutdown_flushes_open_burst(tmp_path: Path):
-    _enable_scroll(tmp_path, coalesce_ms=400, triggers=True)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=400, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "Safari — Docs"
     _feed_scrolls(6, start=0.0)
@@ -355,7 +305,7 @@ def test_T_F6_11_shutdown_flushes_open_burst(tmp_path: Path):
 
 
 def test_T_F6_11b_file_flush_does_not_drop_open_burst(tmp_path: Path):
-    _enable_scroll(tmp_path, coalesce_ms=400, triggers=True)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=400, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "Safari — Docs"
     _feed_scrolls(7, start=0.0)
@@ -371,7 +321,7 @@ def test_T_F6_11b_file_flush_does_not_drop_open_burst(tmp_path: Path):
 
 
 def test_T_F6_12_no_screenshot_or_scan_on_scroll(tmp_path: Path):
-    _enable_scroll(tmp_path, coalesce_ms=50, triggers=True)
+    enable_features(tmp_path, scroll_coalesce_enabled=True, scroll_coalesce_ms=50, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "Safari — Docs"
     with (

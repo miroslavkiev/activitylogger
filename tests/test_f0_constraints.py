@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import queue
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,45 +12,14 @@ import pytest
 
 import clean_markdown_log as cleaner
 import interleaved_logger as il
+from config import DEFAULT_SECURE_APPS
 
 REPO = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(autouse=True)
-def _reset_logger_state():
-    with il._lock:
-        il._current_heading = ""
-        il._current_keystrokes.clear()
-        il._current_events.clear()
-        il._sections.clear()
-        il._last_screen_text = ""
-        il._last_clipboard_count = 0
-        il._last_clipboard_text = ""
-        il._pause_secure_app = False
-        il._pause_secure_field = False
-        il._is_paused = False
-        il._current_modifiers.clear()
-        il._secure_field_cache = False
-        il._secure_field_cache_at = 0.0
-        il._window_bucket = None
-        il._scan_pending = False
-        il._last_key_activity_mono = None
-        il._last_key_flush_cause = None
-        il._key_flush_hook = None
-    il.SECURE_APPS = {
-        "1password",
-        "bitwarden",
-        "keychain",
-        "keepass",
-        "lastpass",
-        "passwords",
-    }
-    while True:
-        try:
-            il._ax_jobs.get_nowait()
-            il._ax_jobs.task_done()
-        except queue.Empty:
-            break
+def _reset_logger_state(reset_logger_state):
+    reset_logger_state()
     yield
 
 
@@ -66,13 +34,16 @@ def test_start_logger_uses_open_dash_w_on_app_bundle():
     text = _read("start_logger.sh")
     assert re.search(r"/usr/bin/open\s+-W\b", text)
     assert "ActivityLoggerNative.app" in text
-    # Final launch must be open -W on the .app (not a bare open).
+    # Final launch must be open -W on $APP (bundle path set above; not bare open).
     active = [
         ln.strip()
         for ln in text.splitlines()
         if ln.strip() and not ln.strip().startswith("#")
     ]
-    assert any("/usr/bin/open -W" in ln and "ActivityLoggerNative.app" in ln for ln in active)
+    assert any(
+        re.search(r"/usr/bin/open\s+-W\b", ln) and ("$APP" in ln or "ActivityLoggerNative.app" in ln)
+        for ln in active
+    )
 
 
 def test_start_logger_does_not_exec_inner_macos_binary():
@@ -109,7 +80,8 @@ def test_launch_agent_plist_invokes_start_logger_not_python():
     assert "python" not in arg_block.lower()
     install = _read("scripts/install_launch_agent.sh")
     assert "com.mk.activitylogger.plist.template" in install
-    assert "ACTIVITYLOGGER_REPO" in install
+    assert "resolve_repo_root.sh" in install
+    assert "ACTIVITYLOGGER_REPO" in _read("scripts/lib/resolve_repo_root.sh")
 
 
 def test_rebuild_script_invokes_sign_app():
@@ -125,13 +97,16 @@ def test_rebuild_script_invokes_sign_app():
 
 def test_rebuild_script_fails_without_certificate_leaf():
     text = _read("scripts/rebuild_and_restart.sh")
-    # Hard fail when designated requirement lacks certificate leaf.
+    leaf_lib = _read("scripts/lib/require_certificate_leaf.sh")
+    # Rebuild sources shared DR gate and fails when leaf is missing.
+    assert "require_certificate_leaf.sh" in text
+    assert "require_certificate_leaf" in text
     assert re.search(
         r"grep\s+-q\s+['\"]certificate leaf['\"]",
-        text,
-    ), "expected grep -q 'certificate leaf' DR gate"
+        leaf_lib,
+    ), "expected grep -q 'certificate leaf' in require_certificate_leaf.sh"
     gate = re.search(
-        r"if\s+!\s+echo\s+\"\$DR\"\s+\|\s+grep\s+-q\s+['\"]certificate leaf['\"].*?"
+        r"if\s+!\s+DR=\"\$\(require_certificate_leaf\s+\"\$APP\"\)\".*?"
         r"exit\s+1",
         text,
         flags=re.DOTALL,
@@ -243,8 +218,7 @@ def test_recompute_clears_modifiers_on_pause_edge():
 
 
 def test_secure_apps_set_locked_baseline():
-    required = {"1password", "bitwarden", "keychain", "keepass", "lastpass", "passwords"}
-    assert required.issubset(il.SECURE_APPS)
+    assert set(DEFAULT_SECURE_APPS).issubset(il.SECURE_APPS)
 
 
 def test_is_secure_app_name_positive_and_negative():
@@ -279,7 +253,7 @@ def test_get_filepath_is_daily_markdown_only(tmp_path, monkeypatch):
 
 def test_log_dir_mode_is_0o700(tmp_path, monkeypatch):
     log_dir = tmp_path / "logs"
-    log_dir.mkdir()
+    log_dir.mkdir(exist_ok=True)
     log_dir.chmod(0o755)
     monkeypatch.setattr(il, "LOG_DIR", log_dir)
     il._get_filepath()

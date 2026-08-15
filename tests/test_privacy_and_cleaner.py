@@ -14,42 +14,8 @@ import interleaved_logger as il
 
 
 @pytest.fixture(autouse=True)
-def _reset_logger_state():
-    with il._lock:
-        il._current_heading = ""
-        il._current_keystrokes.clear()
-        il._current_events.clear()
-        il._sections.clear()
-        il._last_screen_text = ""
-        il._last_clipboard_count = 0
-        il._last_clipboard_text = ""
-        il._pause_secure_app = False
-        il._pause_secure_field = False
-        il._is_paused = False
-        il._current_modifiers.clear()
-        il._secure_field_cache = False
-        il._secure_field_cache_at = 0.0
-        il._window_bucket = None
-        il._scan_pending = False
-        il._last_key_activity_mono = None
-        il._last_key_flush_cause = None
-        il._key_flush_hook = None
-    # Keep privacy baseline after config injection tests
-    il.SECURE_APPS = {
-        "1password",
-        "bitwarden",
-        "keychain",
-        "keepass",
-        "lastpass",
-        "passwords",
-    }
-    # Drain AX queue
-    while True:
-        try:
-            il._ax_jobs.get_nowait()
-            il._ax_jobs.task_done()
-        except queue.Empty:
-            break
+def _reset_logger_state(reset_logger_state):
+    reset_logger_state()
     yield
 
 
@@ -157,7 +123,9 @@ def test_flush_restore_on_body_write_failure(tmp_path, monkeypatch):
 
     batch = [{"heading": "App — Win", "events": ["typed"], "timestamp": "12:00:00"}]
     with il._lock:
-        il._sections = list(batch)
+        il.rebind_capture_buffers()
+        il._sections.clear()
+        il._sections.extend(batch)
 
     def fail_write(filepath, lines, append=True):
         return False
@@ -166,6 +134,7 @@ def test_flush_restore_on_body_write_failure(tmp_path, monkeypatch):
     il.flush_to_file()
     with il._lock:
         assert il._sections == batch
+    il.rebind_capture_buffers()
 
 
 def test_flush_success_clears_sections(tmp_path, monkeypatch):
@@ -175,11 +144,14 @@ def test_flush_success_clears_sections(tmp_path, monkeypatch):
     monkeypatch.setattr(il, "_get_filepath", lambda: path)
 
     with il._lock:
-        il._sections = [{"heading": "H", "events": ["e"], "timestamp": "01:02:03"}]
+        il.rebind_capture_buffers()
+        il._sections.clear()
+        il._sections.append({"heading": "H", "events": ["e"], "timestamp": "01:02:03"})
     il.flush_to_file()
     with il._lock:
         assert il._sections == []
     assert "e" in path.read_text(encoding="utf-8")
+    il.rebind_capture_buffers()
 
 
 def test_enqueue_ax_drops_on_full_without_raising():

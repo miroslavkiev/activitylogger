@@ -2,7 +2,7 @@
 
 | Feature | Executor | Checker | Notes |
 |---------|----------|---------|-------|
-| Plan | done | PLAN_ACCEPT | IMPLEMENTATION-PLAN.md |
+| Plan | done | FINAL_ACCEPT | IMPLEMENTATION-PLAN.md |
 | F0 | done | F0_ACCEPT | KEEP/AVOID gates; open -W; no JPEG/OCR/Screen Recording |
 | F2 | done | F2_ACCEPT | `~/.config/activitylogger/config.toml`; rejected aliases warn-only |
 | F1 | done | F1_ACCEPT | Native-first titles; AW enricher optional |

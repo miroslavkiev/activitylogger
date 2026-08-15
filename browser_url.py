@@ -11,6 +11,8 @@ import re
 import subprocess
 from typing import Callable, Optional, Protocol
 
+from markdown_format import URL_EVENT_PREFIX
+
 MAX_URL_LEN = 2000
 
 # Display-name substrings (case-insensitive). Keep narrow; tests lock the table.
@@ -34,13 +36,6 @@ class BrowserUrlProvider(Protocol):
 
     def get_url(self, app_name: str) -> Optional[str]:
         ...
-
-
-class NullBrowserUrlProvider:
-    """No-op provider (non-macOS / AX unavailable)."""
-
-    def get_url(self, app_name: str) -> Optional[str]:
-        return None
 
 
 class MacBrowserUrlProvider:
@@ -81,7 +76,7 @@ def normalize_url_candidate(raw: str | None) -> str | None:
 
 def format_url_event(url: str) -> str:
     """Stable Markdown event line for Gemini / cleaner."""
-    return f"> [URL]: {url}"
+    return f"{URL_EVENT_PREFIX}{url}"
 
 
 def should_emit_url(

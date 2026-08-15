@@ -1,6 +1,7 @@
 # F3 — Improve flush model (P1)
 
-Status: draft spec (test-driven). Contract: [`00-SCOPE.md`](00-SCOPE.md).  
+**Status:** Implemented (F3_ACCEPT; FINAL_ACCEPT)  
+Contract: [`00-SCOPE.md`](00-SCOPE.md).  
 Depends on: F2 (config for intervals). Coordinates with: F5 (section trigger names).
 
 ---
@@ -13,9 +14,9 @@ Keep char-level keystroke capture. Add a **typing-pause burst flush**: after a s
 
 ---
 
-## 2. Current behavior (precise)
+## 2. Previous behavior (before F3)
 
-Source of truth: `interleaved_logger.py` (as of v4.1.0).
+Source of truth before F3: `interleaved_logger.py` (pre-typing-pause burst flush).
 
 ### 2.1 Buffers and section model
 
@@ -438,7 +439,7 @@ Then: keys appear once under the correct heading; no duplicate burst event.
 
 ## 12. Implementation notes (high-level)
 
-No code in this section — design only.
+Implemented under FINAL_ACCEPT. Historical build notes:
 
 1. Store last buffer-mutating activity as a monotonic timestamp.
 2. Add an idle checker (short tick or dedicated loop) that respects `typing_pause_sec` and the shared lock.
@@ -446,7 +447,7 @@ No code in this section — design only.
 4. Do **not** seal `_sections` and do **not** call `flush_to_file` from typing pause.
 5. On pause edge: keep discard behavior; clear last-key timestamp or mark idle check inert until the next key after unpause.
 6. Replace `FLUSH_INTERVAL_SEC` literal usage with F2 `flush_interval_sec`; keep default 30.
-7. Add unit tests in `tests/` first (failing), then implement; keep existing privacy/flush-restore tests green.
+7. Unit tests in `tests/` (T-F3-*); keep existing privacy/flush-restore tests green.
 8. After binary change: production path remains `./scripts/rebuild_and_restart.sh` (certificate leaf). Smoke: type, brief pause, wait ≤ file interval → `daily_log_*.md` grows with burst text.
 
 ---
@@ -462,8 +463,8 @@ No code in this section — design only.
 - [x] TDD edges: backspace, hotkeys, pause mid-type, window switch, modifier-only, races
 - [x] No JSONL / SQLite creep (NG2, FR-F3-018)
 - [x] F5 spec marks `typing_pause` reserved until seal-on-burst is approved
-- [ ] Tests T-F3-01…24 drafted as failing tests before implementation
-- [ ] Privacy discard-on-pause reconfirmed in CI
+- [x] Tests T-F3-01…24 (see `tests/`; implemented under FINAL_ACCEPT)
+- [x] Privacy discard-on-pause reconfirmed in CI
 
 ---
 
@@ -480,4 +481,4 @@ No code in this section — design only.
 - Added FR-F3-018 and AC10 against JSONL/SQLite/sidecars.
 - F5 keeps `typing_pause` in the closed set as **reserved** until a future seal-on-burst decision.
 
-**Verdict: ACCEPT**
+**Verdict: FINAL_ACCEPT**

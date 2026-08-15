@@ -5,22 +5,14 @@ from __future__ import annotations
 import os
 import stat
 import sys
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
 
 import config as cfg
 import interleaved_logger as il
-
-
-DEFAULT_SECURE = [
-    "1password",
-    "bitwarden",
-    "keychain",
-    "keepass",
-    "lastpass",
-    "passwords",
-]
+from config import DEFAULT_SECURE_APPS
 
 
 def _clear_discovery_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,13 +49,20 @@ def test_tc_f2_01_defaults_when_file_missing(tmp_path, monkeypatch):
     assert loaded.window_check_sec == 5
     assert loaded.flush_interval_sec == 30
     assert loaded.typing_pause_sec == 0.5
-    assert list(loaded.secure_apps) == DEFAULT_SECURE
+    assert loaded.secure_apps == DEFAULT_SECURE_APPS
     assert loaded.ax_max_depth == 7
     assert loaded.activitywatch_enricher is True
     assert loaded.browser_url_capture is False
     assert loaded.capture_triggers_enabled is False
     assert loaded.scroll_coalesce_enabled is False
     assert loaded.scroll_coalesce_ms == 400
+    assert loaded.secure_app_check_sec == 0.15
+    assert loaded.ax_max_children == 40
+    assert loaded.ax_scan_debounce_sec == 3.0
+    assert loaded.aw_backoff_sec == 45.0
+    assert loaded.max_keystrokes == 2000
+    assert loaded.max_events == 500
+    assert loaded.max_sections == 200
     assert loaded.config_path is None
 
 
@@ -391,10 +390,14 @@ def test_tc_f2_14_start_logger_repo_resolution(tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "start_logger.sh"
     text = script.read_text(encoding="utf-8")
+    resolve_lib = (repo_root / "scripts" / "lib" / "resolve_repo_root.sh").read_text(
+        encoding="utf-8"
+    )
     assert 'REPO="${HOME}/scripts/activitylogger"' not in text
     assert "/Users/mk" not in text
-    assert "dirname" in text
-    assert "ACTIVITYLOGGER_REPO" in text
+    assert "resolve_repo_root.sh" in text
+    assert "dirname" in text or "dirname" in resolve_lib
+    assert "ACTIVITYLOGGER_REPO" in resolve_lib
     assert "open -W" in text
 
 
@@ -409,9 +412,11 @@ def test_tc_f2_15_install_template_substitution(tmp_path, monkeypatch):
     assert install.exists()
     assert "@REPO@" in template.read_text(encoding="utf-8")
 
+    # Install requires a certificate-signed .app under REPO/dist (ops hardening).
+    # Use the real checkout as REPO; write the plist only into tmp.
     out_plist = tmp_path / "com.mk.activitylogger.plist"
     env = os.environ.copy()
-    env["ACTIVITYLOGGER_REPO"] = "/tmp/al"
+    env["ACTIVITYLOGGER_REPO"] = str(repo_root)
     env["ACTIVITYLOGGER_PLIST_OUT"] = str(out_plist)
     import subprocess
 
@@ -422,8 +427,87 @@ def test_tc_f2_15_install_template_substitution(tmp_path, monkeypatch):
         cwd=str(tmp_path),
     )
     body = out_plist.read_text(encoding="utf-8")
-    assert "/tmp/al" in body
+    repo_s = str(repo_root)
+    assert repo_s in body
     assert "@REPO@" not in body
-    assert "/Users/mk/scripts/activitylogger" not in body
-    assert "/tmp/al/logs/launchd-stdout.log" in body
-    assert "/tmp/al/logs/launchd-stderr.log" in body
+    assert f"{repo_s}/logs/launchd-stdout.log" in body
+    assert f"{repo_s}/logs/launchd-stderr.log" in body
+    assert f"{repo_s}/start_logger.sh" in body
+
+
+def test_hardening_knobs_round_trip(tmp_path, monkeypatch):
+    _clear_discovery_env(monkeypatch)
+    conf = tmp_path / "config.toml"
+    _write_toml(
+        conf,
+        "\n".join(
+            [
+                "[timing]",
+                "secure_app_check_sec = 0.2",
+                "[ax]",
+                "ax_max_children = 12",
+                "ax_scan_debounce_sec = 1.5",
+                "[window_titles]",
+                "aw_backoff_sec = 60",
+                "[buffers]",
+                "max_keystrokes = 500",
+                "max_events = 50",
+                "max_sections = 20",
+                "",
+            ]
+        ),
+    )
+    loaded = cfg.load_config(conf)
+    assert loaded.secure_app_check_sec == 0.2
+    assert loaded.ax_max_children == 12
+    assert loaded.ax_scan_debounce_sec == 1.5
+    assert loaded.aw_backoff_sec == 60.0
+    assert loaded.max_keystrokes == 500
+    assert loaded.max_events == 50
+    assert loaded.max_sections == 20
+    il.apply_config(loaded)
+    assert il.SECURE_APP_CHECK_SEC == 0.2
+    assert il.AX_MAX_CHILDREN == 12
+    assert il.AX_SCAN_DEBOUNCE_SEC == 1.5
+    assert il.AW_BACKOFF_SEC == 60.0
+    assert il.MAX_KEYSTROKES == 500
+    assert il.MAX_EVENTS == 50
+    assert il.MAX_SECTIONS == 20
+    assert il._state.config is loaded
+    assert il._APP_CONFIG is loaded
+
+
+def test_buffers_max_keystrokes_floor(tmp_path, monkeypatch):
+    _clear_discovery_env(monkeypatch)
+    conf = tmp_path / "config.toml"
+    _write_toml(conf, "[buffers]\nmax_keystrokes = 10\n")
+    with pytest.raises(cfg.ConfigError, match="max_keystrokes"):
+        cfg.load_config(conf)
+
+
+def test_config_example_secure_apps_match_defaults(tmp_path, monkeypatch):
+    """config.example.toml privacy.secure_apps matches DEFAULT_SECURE_APPS."""
+    _clear_discovery_env(monkeypatch)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    example = Path(__file__).resolve().parents[1] / "config.example.toml"
+    loaded = cfg.load_config(example)
+    assert loaded.secure_apps == cfg.default_config(home=home).secure_apps
+    assert loaded.secure_apps == DEFAULT_SECURE_APPS
+
+
+def test_config_example_toml_matches_default_config(tmp_path, monkeypatch):
+    """Repo-root config.example.toml matches default_config() (except config_path)."""
+    _clear_discovery_env(monkeypatch)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    example = Path(__file__).resolve().parents[1] / "config.example.toml"
+    loaded = cfg.load_config(example)
+    expected = cfg.default_config(home=home)
+    for f in fields(cfg.AppConfig):
+        if f.name == "config_path":
+            continue
+        assert getattr(loaded, f.name) == getattr(expected, f.name), f.name
+    assert loaded.config_path == example.resolve()

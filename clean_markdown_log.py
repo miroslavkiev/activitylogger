@@ -24,6 +24,12 @@ import sys
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Tuple
 
+from markdown_format import (
+    RE_TIMESTAMP_LINE,
+    URL_EVENT_PREFIX,
+    is_timestamp_line,
+)
+
 # ----------------------------
 # Tunables (edit to taste)
 # ----------------------------
@@ -62,10 +68,6 @@ TRACEBACK_TRUNC_TEMPLATE = "... [Truncated {removed} traceback/error lines to sa
 # ----------------------------
 
 RE_SECTION_HEADER = re.compile(r"^##\s+.+\S.*$")
-# Legacy: *HH:MM:SS*  |  F5: *HH:MM:SS · trigger:{name}*
-RE_TIMESTAMP_LINE = re.compile(
-    r"^\*\d{2}:\d{2}:\d{2}(?: · trigger:[a-z][a-z0-9_]*)?\*\s*$"
-)
 
 # Fences: open is any ```..., close must be bare ```
 RE_FENCE_OPEN = re.compile(r"^```.*$")
@@ -78,9 +80,15 @@ _SHARED_NOISE: List[Tuple[str, str]] = [
     ("objc duplicate class warnings", r"^\s*objc\[\d+\]:\s+Class\s+.*\s+is implemented in both\b.*"),
 ]
 
+# One pattern shared by spam-run compaction and fenced-block noise removal
+_REMOTE_RAW_NOISE: Tuple[str, str] = (
+    "remote.raw stream",
+    r"^\[\d{2}:\d{2}:\d{2}\.\d{3}\]\[I\]\[remote\.raw:\d+\]:\s+Received Raw:\s+\d+",
+)
+
 # Runs of lines matching these regexes will be compacted when very long (consecutive runs only).
 SPAM_RUN_PATTERNS: List[Tuple[str, str]] = [
-    ("remote.raw stream", r"^\[\d{2}:\d{2}:\d{2}\.\d{3}\]\[I\]\[remote\.raw:\d+\]:\s+Received Raw:\s+\d+"),
+    _REMOTE_RAW_NOISE,
 ]
 
 # Non-consecutive noise lines to REMOVE (outside fences) with per-section summary.
@@ -96,7 +104,7 @@ NOISE_LINE_PATTERNS: List[Tuple[str, str]] = _SHARED_NOISE + [
 
 # Noise lines to remove *inside* fenced log-dumps (only for ```text / ```log / ```txt blocks)
 CODEBLOCK_NOISE_PATTERNS: List[Tuple[str, str]] = _SHARED_NOISE + [
-    ("remote.raw stream", r"^\[\d{2}:\d{2}:\d{2}\.\d{3}\]\[I\]\[remote\.raw:\d+\]:\s+Received Raw:\s+\d+"),
+    _REMOTE_RAW_NOISE,
 ]
 
 
@@ -106,10 +114,6 @@ def is_blank(line: str) -> bool:
 
 def is_section_header(line: str) -> bool:
     return bool(RE_SECTION_HEADER.match(line))
-
-
-def is_timestamp_line(line: str) -> bool:
-    return bool(RE_TIMESTAMP_LINE.match(line))
 
 
 def is_separator_line(line: str) -> bool:
@@ -141,7 +145,7 @@ def is_event_candidate_line(line: str) -> bool:
 def is_url_event_line(line: str) -> bool:
     """F4 stable token: leave ``> [URL]: …`` intact (no plaintext truncation)."""
     core = line[:-1] if line.endswith("\n") else line
-    return core.startswith("> [URL]: ")
+    return core.startswith(URL_EVENT_PREFIX)
 
 
 def truncate_plaintext_line(line: str) -> str:

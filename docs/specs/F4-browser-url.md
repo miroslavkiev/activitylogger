@@ -1,6 +1,6 @@
 # F4 — Optional browser URL capture (P0)
 
-**Status:** Implemented (opt-in; default OFF).  
+**Status:** Implemented (F4_ACCEPT; FINAL_ACCEPT; opt-in, default OFF).  
 **Scope contract:** [`00-SCOPE.md`](00-SCOPE.md)  
 **Constraints:** [`F0-constraints-and-non-goals.md`](F0-constraints-and-non-goals.md), [`docs/MACOS_TCC.md`](../MACOS_TCC.md)  
 **Related:** F1 (native window titles), F2 (`features.browser_url_capture`), F5 (`url_change` trigger)
@@ -188,7 +188,7 @@ F4 tests that assert only event text / heading shape MUST remain valid if F5 add
 
 ### FR-F4-011 — Gemini prompt note
 
-When F4 is implemented, `prompts/gemini-automation-analysis.md` SHALL mention URL lines of the form `> [URL]: …` under Data format. Spec change can land with the implementation PR; this FR tracks that doc update.
+Shipped: `prompts/gemini-automation-analysis.md` documents URL lines of the form `> [URL]: …` under Data format. Do not re-edit that prompt in docs-only passes.
 
 ### FR-F4-012 — Diagnostics
 

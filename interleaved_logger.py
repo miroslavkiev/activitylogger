@@ -44,9 +44,19 @@ from browser_url import (
     apply_url_observation,
     get_frontmost_browser_url,
     is_browser_app,
-    set_url_provider as set_browser_url_provider,
 )
-from config import AppConfig, ConfigError, ensure_log_dir, load_config, startup_diag_line
+from config import (
+    AppConfig,
+    ConfigError,
+    default_config,
+    ensure_log_dir,
+    load_config,
+    startup_diag_line,
+)
+from markdown_format import (
+    CAPTURE_TRIGGERS,
+    format_section_timestamp_line,
+)
 from scroll_coalesce import (
     ScrollBurst,
     accumulate as scroll_accumulate,
@@ -63,45 +73,29 @@ from window_titles import (
 
 __version__ = "4.1.0"
 
-# Defaults match F2 §6.2 / pre-F2 constants. main() calls apply_config(load_config()).
-AW_BASE_URL = "http://localhost:5600"
-WINDOW_CHECK_SEC = 5
-FLUSH_INTERVAL_SEC = 30
-TYPING_PAUSE_SEC = 0.5
-SECURE_FIELD_CACHE_SEC = 0.35
-AX_QUEUE_MAXSIZE = 16
-AX_MAX_DEPTH = 7
-SCREEN_COMPARE_MAX_CHARS = 4000
-
-SECURE_APPS: set[str] = {
-    "1password",
-    "bitwarden",
-    "keychain",
-    "keepass",
-    "lastpass",
-    "passwords",
-}
-
-ACTIVITYWATCH_ENRICHER = True
-BROWSER_URL_CAPTURE = False
-CAPTURE_TRIGGERS_ENABLED = False
-SCROLL_COALESCE_ENABLED = False
-SCROLL_COALESCE_MS = 400
-
-# F5 closed set — writers use only these when capture_triggers_enabled.
-# typing_pause is reserved (F3 v1 must not emit it as a section trigger).
-# url_change / scroll_coalesce are reserved for F4 / F6 seal paths.
-CAPTURE_TRIGGERS: frozenset[str] = frozenset(
-    {
-        "app_switch",
-        "click",
-        "typing_pause",
-        "clipboard",
-        "file_flush",
-        "url_change",
-        "scroll_coalesce",
-    }
-)
+# Config mirrors — seeded from AppConfig defaults (single literal source: config.default_config).
+_DEFAULTS = default_config()
+AW_BASE_URL = _DEFAULTS.activitywatch_base_url
+WINDOW_CHECK_SEC = _DEFAULTS.window_check_sec
+FLUSH_INTERVAL_SEC = _DEFAULTS.flush_interval_sec
+TYPING_PAUSE_SEC = _DEFAULTS.typing_pause_sec
+SECURE_FIELD_CACHE_SEC = _DEFAULTS.secure_field_cache_sec
+SECURE_APP_CHECK_SEC = _DEFAULTS.secure_app_check_sec
+AX_QUEUE_MAXSIZE = _DEFAULTS.ax_queue_maxsize
+AX_MAX_DEPTH = _DEFAULTS.ax_max_depth
+AX_MAX_CHILDREN = _DEFAULTS.ax_max_children
+AX_SCAN_DEBOUNCE_SEC = _DEFAULTS.ax_scan_debounce_sec
+SCREEN_COMPARE_MAX_CHARS = _DEFAULTS.screen_compare_max_chars
+SECURE_APPS: set[str] = set(_DEFAULTS.secure_apps)
+ACTIVITYWATCH_ENRICHER = _DEFAULTS.activitywatch_enricher
+AW_BACKOFF_SEC = _DEFAULTS.aw_backoff_sec
+BROWSER_URL_CAPTURE = _DEFAULTS.browser_url_capture
+CAPTURE_TRIGGERS_ENABLED = _DEFAULTS.capture_triggers_enabled
+SCROLL_COALESCE_ENABLED = _DEFAULTS.scroll_coalesce_enabled
+SCROLL_COALESCE_MS = _DEFAULTS.scroll_coalesce_ms
+MAX_KEYSTROKES = _DEFAULTS.max_keystrokes
+MAX_EVENTS = _DEFAULTS.max_events
+MAX_SECTIONS = _DEFAULTS.max_sections
 
 if PYNPUT_AVAILABLE:
     _MODIFIER_KEYS = {
@@ -123,35 +117,60 @@ else:
     _MODIFIER_KEYS = {}
 
 
-def _resolve_log_dir() -> Path:
-    """Default log dir when no config applied yet (import-time / tests)."""
-    base = os.environ.get("HOME") or Path.home()
-    if not Path(base).exists():
-        try:
-            import pwd
-
-            base = pwd.getpwuid(os.getuid()).pw_dir
-        except Exception:
-            base = "/tmp"
-    log_dir = Path(base) / "scripts" / "activitylogger" / "logs"
+# Import-time default; apply_config() replaces with cfg.log_dir.
+_log_dir = default_config().log_dir
+try:
+    LOG_DIR = ensure_log_dir(_log_dir)
+except ConfigError:
+    LOG_DIR = _log_dir
     try:
-        ensure_log_dir(log_dir)
-    except ConfigError:
-        log_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(log_dir, 0o700)
-        except OSError:
-            pass
-    return log_dir
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(LOG_DIR, 0o700)
+    except OSError:
+        pass
 
 
-LOG_DIR = _resolve_log_dir()
+class LoggerState:
+    """Mutable capture state. Buffer lists are identity-aliased at module level for tests."""
 
+    __slots__ = (
+        "aw_backoff_until",
+        "last_ax_scan_mono",
+        "last_secure_app_check_mono",
+        "config",
+        "current_keystrokes",
+        "current_events",
+        "sections",
+    )
+
+    def __init__(self) -> None:
+        self.aw_backoff_until: float = 0.0
+        self.last_ax_scan_mono: float = 0.0
+        self.last_secure_app_check_mono: float = 0.0
+        self.config: AppConfig | None = None
+        self.current_keystrokes: list[str] = []
+        self.current_events: list[str] = []
+        self.sections: list[dict] = []
+
+    def reset_runtime_controls(self) -> None:
+        self.aw_backoff_until = 0.0
+        self.last_ax_scan_mono = 0.0
+        self.last_secure_app_check_mono = 0.0
+
+    def clear_capture_buffers(self) -> None:
+        """Clear in place so module aliases keep the same list objects."""
+        self.current_keystrokes.clear()
+        self.current_events.clear()
+        self.sections.clear()
+
+
+_state = LoggerState()
 _lock = threading.Lock()
 _current_heading = ""
-_current_keystrokes: list[str] = []
-_current_events: list[str] = []
-_sections: list[dict] = []
+# Same list objects as LoggerState (tests mutate il._current_* / il._sections).
+_current_keystrokes = _state.current_keystrokes
+_current_events = _state.current_events
+_sections = _state.sections
 
 _last_screen_text = ""
 _last_clipboard_count = 0
@@ -178,8 +197,7 @@ _ax_meta_lock = threading.Lock()
 _instance_lock_file = None
 
 _diag_last: dict[str, float] = {}
-_DIAG_MIN_INTERVAL = 30.0
-_APP_CONFIG: AppConfig | None = None
+_DIAG_MIN_INTERVAL = _DEFAULTS.diag_min_interval_sec
 
 # F6 scroll coalesce — open burst (None = no open burst)
 _scroll_burst: ScrollBurst | None = None
@@ -189,31 +207,60 @@ _scroll_diag_emitted = False
 mouse_Listener = mouse.Listener if PYNPUT_AVAILABLE else None
 
 
+def _active_config() -> AppConfig:
+    """Runtime config: last apply_config, else built-in defaults."""
+    return _state.config if _state.config is not None else _DEFAULTS
+
+
+# Module attribute used by tests (updated in apply_config). Same object as _state.config.
+_APP_CONFIG: AppConfig | None = None
+
+
+def rebind_capture_buffers() -> None:
+    """Point module buffer aliases at LoggerState lists (after tests reassign globals)."""
+    global _current_keystrokes, _current_events, _sections
+    _current_keystrokes = _state.current_keystrokes
+    _current_events = _state.current_events
+    _sections = _state.sections
+
+
 def apply_config(cfg: AppConfig) -> None:
-    """Apply loaded AppConfig to module globals (call once at startup / in tests)."""
+    """Apply loaded AppConfig to module mirrors and LoggerState (startup / tests)."""
     global AW_BASE_URL, WINDOW_CHECK_SEC, FLUSH_INTERVAL_SEC, TYPING_PAUSE_SEC
-    global SECURE_FIELD_CACHE_SEC, AX_QUEUE_MAXSIZE, AX_MAX_DEPTH, SCREEN_COMPARE_MAX_CHARS
+    global SECURE_FIELD_CACHE_SEC, SECURE_APP_CHECK_SEC
+    global AX_QUEUE_MAXSIZE, AX_MAX_DEPTH, AX_MAX_CHILDREN, AX_SCAN_DEBOUNCE_SEC
+    global SCREEN_COMPARE_MAX_CHARS
     global SECURE_APPS, LOG_DIR, _DIAG_MIN_INTERVAL, _ax_jobs, _APP_CONFIG
-    global ACTIVITYWATCH_ENRICHER, BROWSER_URL_CAPTURE, CAPTURE_TRIGGERS_ENABLED
-    global SCROLL_COALESCE_ENABLED, SCROLL_COALESCE_MS
+    global ACTIVITYWATCH_ENRICHER, AW_BACKOFF_SEC, BROWSER_URL_CAPTURE
+    global CAPTURE_TRIGGERS_ENABLED, SCROLL_COALESCE_ENABLED, SCROLL_COALESCE_MS
+    global MAX_KEYSTROKES, MAX_EVENTS, MAX_SECTIONS
 
     AW_BASE_URL = cfg.activitywatch_base_url
     WINDOW_CHECK_SEC = cfg.window_check_sec
     FLUSH_INTERVAL_SEC = cfg.flush_interval_sec
     TYPING_PAUSE_SEC = cfg.typing_pause_sec
     SECURE_FIELD_CACHE_SEC = cfg.secure_field_cache_sec
+    SECURE_APP_CHECK_SEC = cfg.secure_app_check_sec
     AX_QUEUE_MAXSIZE = cfg.ax_queue_maxsize
     AX_MAX_DEPTH = cfg.ax_max_depth
+    AX_MAX_CHILDREN = cfg.ax_max_children
+    AX_SCAN_DEBOUNCE_SEC = cfg.ax_scan_debounce_sec
     SCREEN_COMPARE_MAX_CHARS = cfg.screen_compare_max_chars
     SECURE_APPS = set(cfg.secure_apps)
     _DIAG_MIN_INTERVAL = cfg.diag_min_interval_sec
     ACTIVITYWATCH_ENRICHER = cfg.activitywatch_enricher
+    AW_BACKOFF_SEC = cfg.aw_backoff_sec
     BROWSER_URL_CAPTURE = cfg.browser_url_capture
     CAPTURE_TRIGGERS_ENABLED = cfg.capture_triggers_enabled
     SCROLL_COALESCE_ENABLED = cfg.scroll_coalesce_enabled
     SCROLL_COALESCE_MS = cfg.scroll_coalesce_ms
+    MAX_KEYSTROKES = cfg.max_keystrokes
+    MAX_EVENTS = cfg.max_events
+    MAX_SECTIONS = cfg.max_sections
     LOG_DIR = ensure_log_dir(cfg.log_dir)
     _APP_CONFIG = cfg
+    _state.config = cfg
+    rebind_capture_buffers()
     # Recreate AX queue if capacity changed and queue is idle (startup / tests).
     if _ax_jobs.maxsize != AX_QUEUE_MAXSIZE and _ax_jobs.empty():
         _ax_jobs = queue.Queue(maxsize=AX_QUEUE_MAXSIZE)
@@ -274,7 +321,8 @@ def _element_looks_secure(element) -> bool:
         return False
 
 
-def get_frontmost_app_name() -> str:
+def _frontmost_app_name() -> str:
+    """NSWorkspace localizedName only (no AX). Used for keypress secure-app throttle."""
     if not AX_AVAILABLE:
         return ""
     try:
@@ -365,7 +413,18 @@ def sync_secure_field_from_focus(*, force: bool = False) -> bool:
     return is_paused()
 
 
+def _mark_aw_backoff() -> None:
+    _state.aw_backoff_until = time.monotonic() + AW_BACKOFF_SEC
+
+
+def _aw_in_backoff(now: float | None = None) -> bool:
+    t = time.monotonic() if now is None else now
+    return t < _state.aw_backoff_until
+
+
 def _find_window_bucket() -> str | None:
+    if _aw_in_backoff():
+        return None
     try:
         resp = requests.get(f"{AW_BASE_URL}/api/0/buckets/", timeout=2)
         resp.raise_for_status()
@@ -373,6 +432,7 @@ def _find_window_bucket() -> str | None:
             if "window" in b_id.lower():
                 return b_id
     except Exception as e:
+        _mark_aw_backoff()
         _diag_rate_limited(f"ActivityWatch buckets error: {e}")
     return None
 
@@ -380,6 +440,8 @@ def _find_window_bucket() -> str | None:
 def get_activitywatch_window() -> tuple[str, str]:
     """ActivityWatch enricher source. Returns (app, title); empty on failure."""
     global _window_bucket
+    if _aw_in_backoff():
+        return "", ""
     try:
         if not _window_bucket:
             _window_bucket = _find_window_bucket()
@@ -400,25 +462,36 @@ def get_activitywatch_window() -> tuple[str, str]:
         return str(app), str(title)
     except Exception as e:
         _window_bucket = None
+        _mark_aw_backoff()
         _diag_rate_limited(f"ActivityWatch events error (bucket cleared): {e}")
         return "", ""
 
 
 def resolve_window() -> tuple[str, str]:
-    """Native-first (app, title); optional AW fills empty fields only."""
+    """Native-first (app, title); optional AW fills empty fields only.
+
+    Skips ActivityWatch HTTP when native app and title are both non-empty.
+    Respects AW failure backoff to avoid rediscovery storms.
+    """
     native = get_native_window()
+    app_n, title_n = native[0] or "", native[1] or ""
     if not ACTIVITYWATCH_ENRICHER:
+        return merge_native_and_aw(native, None, enricher_enabled=False)
+    if app_n and title_n:
+        return app_n, title_n
+    if _aw_in_backoff():
         return merge_native_and_aw(native, None, enricher_enabled=False)
     try:
         aw = get_activitywatch_window()
     except Exception as e:
+        _mark_aw_backoff()
         _diag_rate_limited(f"ActivityWatch enricher error: {e}")
         return merge_native_and_aw(native, None, enricher_enabled=False)
     return merge_native_and_aw(native, aw, enricher_enabled=True)
 
 
 def get_active_window() -> tuple[str, str]:
-    """Production window resolve. Returns (app, title). Prefer resolve_window()."""
+    """test/compat alias → resolve_window()."""
     return resolve_window()
 
 
@@ -439,29 +512,22 @@ def apply_resolved_window(app: str, title: str) -> bool:
     elif is_secure_field:
         new_heading = f"🔒 [SECURE FIELD PAUSED] {body}"
 
+    heading_changed = False
+    need_flush = False
     with _lock:
+        heading_changed = new_heading != _current_heading
         _pause_secure_app = is_secure_app
         _pause_secure_field = is_secure_field
         _recompute_paused_locked()
         _apply_heading_change_locked(new_heading)
+        need_flush = _buffers_need_file_flush_locked()
 
-    if not is_paused():
+    # Skip AX scan enqueue when heading unchanged (debounce still applies if enqueued).
+    if heading_changed and not is_paused():
         _enqueue_ax(("scan",))
+    if need_flush:
+        flush_to_file()
     return True
-
-
-def format_section_timestamp_line(timestamp: str, trigger: str | None = None) -> str:
-    """Format the italic Markdown timestamp line.
-
-    Legacy / no trigger: ``*{HH:MM:SS}*``
-    With trigger: ``*{HH:MM:SS} · trigger:{name}*`` (middle dot U+00B7).
-    Raises ValueError if ``trigger`` is set and not in CAPTURE_TRIGGERS.
-    """
-    if trigger is None:
-        return f"*{timestamp}*"
-    if trigger not in CAPTURE_TRIGGERS:
-        raise ValueError(f"unknown capture trigger: {trigger!r}")
-    return f"*{timestamp} · trigger:{trigger}*"
 
 
 def _seal_open_events_locked(trigger: str) -> None:
@@ -499,6 +565,22 @@ def _flush_keys(*, cause: str = "unknown") -> None:
     hook = _key_flush_hook
     if hook is not None:
         hook(cause)
+
+
+def _buffers_need_file_flush_locked() -> bool:
+    """True when soft caps require a durable flush. Caller holds `_lock`."""
+    if len(_current_keystrokes) >= MAX_KEYSTROKES:
+        _flush_keys(cause="buffer_cap")
+    return len(_current_events) >= MAX_EVENTS or len(_sections) >= MAX_SECTIONS
+
+
+def _maybe_flush_for_buffer_caps() -> None:
+    """Flush keys under lock; force file flush when event/section caps hit."""
+    need_file = False
+    with _lock:
+        need_file = _buffers_need_file_flush_locked()
+    if need_file:
+        flush_to_file()
 
 
 def note_key_activity(now: float | None = None) -> None:
@@ -555,12 +637,17 @@ def apply_heading_change(new_heading: str) -> None:
 
     Resets typing-pause idle state for the new context.
     """
+    need_flush = False
     with _lock:
         _apply_heading_change_locked(new_heading)
+        need_flush = _buffers_need_file_flush_locked()
+    if need_flush:
+        flush_to_file()
 
 
 def add_event(ev: str, seal_trigger: str | None = None) -> None:
     """Append an event. Optional seal_trigger seals when F5 flag is ON."""
+    need_flush = False
     with _lock:
         if _is_paused:
             return
@@ -569,6 +656,9 @@ def add_event(ev: str, seal_trigger: str | None = None) -> None:
         _current_events.append(ev)
         if seal_trigger and CAPTURE_TRIGGERS_ENABLED:
             _seal_open_events_locked(seal_trigger)
+        need_flush = _buffers_need_file_flush_locked()
+    if need_flush:
+        flush_to_file()
 
 
 def record_click_event(desc: str) -> None:
@@ -584,11 +674,6 @@ def record_clipboard_event(event: str) -> None:
 def record_url_event(event: str) -> None:
     """Append a URL event; seal with ``url_change`` when capture_triggers_enabled (F4+F5)."""
     add_event(event, seal_trigger="url_change")
-
-
-def record_scroll_event(line: str) -> None:
-    """Append a coalesced scroll line; seal with ``scroll_coalesce`` when F5 is ON."""
-    add_event(line, seal_trigger="scroll_coalesce")
 
 
 def on_scroll_tick(
@@ -693,10 +778,11 @@ def flush_scroll_burst_on_shutdown() -> bool:
         return _flush_scroll_burst_locked()
 
 
-def mouse_listener_kwargs_for_config() -> dict:
+def mouse_listener_kwargs_for_config(*, on_click=None) -> dict:
     """Listener kwargs for current config. Never includes on_move."""
+    click_cb = on_click if on_click is not None else globals()["on_click"]
     on_scroll_cb = on_scroll if SCROLL_COALESCE_ENABLED else None
-    return mouse_listener_kwargs(on_click=on_click, on_scroll=on_scroll_cb)
+    return mouse_listener_kwargs(on_click=click_cb, on_scroll=on_scroll_cb)
 
 
 def create_mouse_listener_safe(*, on_click):
@@ -708,10 +794,7 @@ def create_mouse_listener_safe(*, on_click):
     global _scroll_diag_emitted
     if not PYNPUT_AVAILABLE or mouse_Listener is None:
         return None, "pynput unavailable"
-    kwargs = mouse_listener_kwargs(
-        on_click=on_click,
-        on_scroll=on_scroll if SCROLL_COALESCE_ENABLED else None,
-    )
+    kwargs = mouse_listener_kwargs_for_config(on_click=on_click)
     try:
         return mouse_Listener(**kwargs), None
     except Exception as e:
@@ -724,28 +807,24 @@ def create_mouse_listener_safe(*, on_click):
                 pass
             # Fall back to click-only
             try:
-                return mouse_Listener(on_click=on_click), note
+                return mouse_Listener(on_click=kwargs["on_click"]), note
             except Exception:
                 return None, note
         # Already diagnosed, or feature off
         try:
-            return mouse_Listener(on_click=on_click), None
+            return mouse_Listener(on_click=kwargs["on_click"]), None
         except Exception:
             return None, None
 
 
 def scroll_coalesce_idle_loop() -> None:
     """Poll quiet expiry for open scroll bursts."""
+    # Intentional parallel shape with typing_pause_idle_loop; no shared idle_loop until a third appears.
     while True:
         interval = max(0.02, min(0.05, SCROLL_COALESCE_MS / 1000.0 / 8.0))
         time.sleep(interval)
         if SCROLL_COALESCE_ENABLED:
             check_scroll_coalesce_idle()
-
-
-def set_url_provider(provider) -> None:
-    """Install a BrowserUrlProvider (tests). Pass None to clear."""
-    set_browser_url_provider(provider)
 
 
 def maybe_capture_browser_url(app: str, *, url_provider=None) -> None:
@@ -771,55 +850,83 @@ def maybe_capture_browser_url(app: str, *, url_provider=None) -> None:
     record_browser_url_observation(raw)
 
 
-def process_window_check_cycle(app: str, title: str, *, url_provider=None) -> bool:
-    """One window-check iteration: heading/section first, then optional URL (FR-F4-009)."""
+def _coerce_url_provider(url_provider):
+    """Wrap a bare callable as a BrowserUrlProvider-like object."""
+    if url_provider is None:
+        return None
+    if callable(url_provider) and not hasattr(url_provider, "get_url"):
+
+        class _FnProvider:
+            def get_url(self, app_name: str):
+                return url_provider(app_name)
+
+        return _FnProvider()
+    return url_provider
+
+
+def process_window_check_cycle(
+    app: str,
+    title: str,
+    *,
+    url_provider=None,
+    url: str | None = None,
+) -> bool:
+    """Single public window-check cycle: heading/section first, then optional URL."""
     ok = apply_resolved_window(app, title)
-    maybe_capture_browser_url(app, url_provider=url_provider)
+    if url is not None:
+        record_browser_url_observation(url)
+    else:
+        maybe_capture_browser_url(app, url_provider=_coerce_url_provider(url_provider))
     return ok
+
 
 def record_browser_url_observation(url: str) -> None:
     """Test/helper: emit a URL observation through the same path as live capture."""
     global _last_emitted_url
     if not BROWSER_URL_CAPTURE:
         return
-    new_last, event = apply_url_observation(
-        enabled=True,
-        paused=is_paused(),
-        candidate=url,
-        last_emitted=_last_emitted_url or None,
-    )
-    _last_emitted_url = new_last
+    event: str | None = None
+    with _lock:
+        new_last, event = apply_url_observation(
+            enabled=True,
+            paused=_is_paused,
+            candidate=url,
+            last_emitted=_last_emitted_url or None,
+        )
+        _last_emitted_url = new_last
     if event:
         record_url_event(event)
 
 
-def apply_window_and_url_cycle(app: str, title: str, *, url: str | None = None) -> bool:
-    """Apply heading change then optional URL (same cycle order as window loop)."""
-    ok = apply_resolved_window(app, title)
-    if url is not None:
-        record_browser_url_observation(url)
-    else:
-        maybe_capture_browser_url(app)
-    return ok
+def _maybe_pause_secure_app_on_key(now: float | None = None) -> None:
+    """Throttled frontmost-app check against SECURE_APPS (keypress path)."""
+    t = time.monotonic() if now is None else now
+    if (t - _state.last_secure_app_check_mono) < SECURE_APP_CHECK_SEC:
+        return
+    _state.last_secure_app_check_mono = t
+    app = _frontmost_app_name()
+    if app and _is_secure_app_name(app, ""):
+        _set_pause(app=True)
 
 
-def run_window_check_iteration(app: str, title: str, *, url_provider=None) -> bool:
-    """Alias for process_window_check_cycle (tests)."""
-    # url_provider may be a callable get_url(app) — wrap as BrowserUrlProvider
-    provider = url_provider
-    if callable(url_provider) and not hasattr(url_provider, "get_url"):
-        class _FnProvider:
-            def get_url(self, app_name: str):
-                return url_provider(app_name)
-        provider = _FnProvider()
-    return process_window_check_cycle(app, title, url_provider=provider)
+def _apply_cached_secure_field_pause_locked() -> None:
+    """Apply pause from cached secure-field flag only (no AX). Caller holds `_lock`."""
+    global _pause_secure_field
+    if _secure_field_cache:
+        _pause_secure_field = True
+        _recompute_paused_locked()
 
 
 def on_press(key) -> None:
-    force = (time.monotonic() - _secure_field_cache_at) >= SECURE_FIELD_CACHE_SEC
-    sync_secure_field_from_focus(force=force)
+    """Keyboard path: cache-only secure-field; throttled secure-app; no AX on this thread."""
+    _maybe_pause_secure_app_on_key()
+    # Background refresh when cache TTL expired (never block the key thread on AX).
+    if (time.monotonic() - _secure_field_cache_at) >= SECURE_FIELD_CACHE_SEC:
+        _enqueue_ax(("secure_focus",))
 
+    need_flush = False
     with _lock:
+        _apply_cached_secure_field_pause_locked()
         if _is_paused:
             return
         mutated = False
@@ -856,6 +963,9 @@ def on_press(key) -> None:
                 mutated = True
         if mutated:
             _note_key_activity_locked()
+            need_flush = _buffers_need_file_flush_locked()
+    if need_flush:
+        flush_to_file()
 
 
 def on_release(key) -> None:
@@ -889,7 +999,7 @@ def extract_text(element, depth=0) -> str:
 
         err, children = AXUIElementCopyAttributeValue(element, "AXChildren", None)
         if err == 0 and children:
-            for child in children:
+            for child in list(children)[:AX_MAX_CHILDREN]:
                 txt = extract_text(child, depth + 1)
                 if txt:
                     extracted.append(txt)
@@ -969,6 +1079,9 @@ def _process_click(x, y) -> None:
 def _enqueue_ax(job: tuple) -> None:
     global _scan_pending
     if job[0] == "scan":
+        now = time.monotonic()
+        if (now - _state.last_ax_scan_mono) < AX_SCAN_DEBOUNCE_SEC:
+            return
         with _ax_meta_lock:
             if _scan_pending:
                 return
@@ -992,9 +1105,12 @@ def _ax_worker_loop() -> None:
             if job[0] == "scan":
                 with _ax_meta_lock:
                     _scan_pending = False
+                _state.last_ax_scan_mono = time.monotonic()
                 scan_screen()
             elif job[0] == "click":
                 _process_click(job[1], job[2])
+            elif job[0] == "secure_focus":
+                sync_secure_field_from_focus(force=False)
         except Exception as e:
             _diag_rate_limited(f"ax_worker error: {e}")
         finally:
@@ -1055,11 +1171,12 @@ def window_checker_loop() -> None:
     while True:
         time.sleep(WINDOW_CHECK_SEC)
         app, title = resolve_window()
-        run_window_check_iteration(app=app, title=title)
+        process_window_check_cycle(app=app, title=title)
 
 
 def typing_pause_idle_loop() -> None:
     """Poll typing-pause idle and flush key buffer into events (no section seal)."""
+    # Intentional parallel shape with scroll_coalesce_idle_loop; no shared idle_loop until a third appears.
     while True:
         time.sleep(min(0.05, max(0.01, TYPING_PAUSE_SEC / 10.0)))
         check_typing_pause_idle()
@@ -1086,11 +1203,7 @@ def _diag(msg: str) -> None:
 
 
 def _get_filepath() -> Path:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(LOG_DIR, 0o700)
-    except OSError:
-        pass
+    ensure_log_dir(LOG_DIR)
     return LOG_DIR / f"daily_log_{datetime.now().strftime('%Y-%m-%d')}.md"
 
 

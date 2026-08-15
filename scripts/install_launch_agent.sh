@@ -4,11 +4,18 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+_HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/resolve_repo_root.sh
+source "${_HERE}/lib/resolve_repo_root.sh"
+# shellcheck source=lib/ensure_log_dir.sh
+source "${_HERE}/lib/ensure_log_dir.sh"
+# shellcheck source=lib/require_certificate_leaf.sh
+source "${_HERE}/lib/require_certificate_leaf.sh"
+
 # Checkout that contains this script (source of the template).
-SOURCE_REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
+SOURCE_REPO="$(cd "${_HERE}/.." && pwd)"
 # Paths written into the plist (may be overridden for install / tests).
-REPO="${ACTIVITYLOGGER_REPO:-$SOURCE_REPO}"
+resolve_repo_root "$SOURCE_REPO"
 TEMPLATE="${SOURCE_REPO}/com.mk.activitylogger.plist.template"
 OUT="${ACTIVITYLOGGER_PLIST_OUT:-${HOME}/Library/LaunchAgents/com.mk.activitylogger.plist}"
 
@@ -17,9 +24,19 @@ if [[ ! -f "$TEMPLATE" ]]; then
   exit 1
 fi
 
+APP="${REPO}/dist/ActivityLoggerNative.app"
+if [[ ! -d "$APP" ]]; then
+  echo "FATAL: missing $APP — run: ./scripts/rebuild_and_restart.sh" >&2
+  exit 1
+fi
+if ! DR="$(require_certificate_leaf "$APP")"; then
+  echo "FATAL: $APP designated requirement lacks certificate leaf (ad-hoc/cdhash-only)." >&2
+  echo "Run: ./scripts/rebuild_and_restart.sh" >&2
+  exit 1
+fi
+
 mkdir -p "$(dirname "$OUT")"
-mkdir -p "${REPO}/logs" 2>/dev/null || true
-chmod 700 "${REPO}/logs" 2>/dev/null || true
+ensure_log_dir "${REPO}/logs"
 
 # Escape & and \ for sed replacement (BSD sed on macOS).
 ESCAPED_REPO="${REPO//\\/\\\\}"

@@ -1,6 +1,6 @@
 # F6 — Optional scroll coalescing (P2)
 
-Status: Draft (critic-revised)  
+**Status:** Implemented (F6_ACCEPT; FINAL_ACCEPT; opt-in, default OFF)  
 Depends on: F2 (config keys and defaults), F5 (trigger name `scroll_coalesce`)  
 Scope contract: [`00-SCOPE.md`](00-SCOPE.md)  
 Constraints: [`F0-constraints-and-non-goals.md`](F0-constraints-and-non-goals.md)
@@ -18,11 +18,11 @@ This feature:
 - does **not** take screenshots or use Screen Recording
 - must respect privacy pause (drop in-flight burst; ignore scrolls while paused)
 
-Today the mouse listener handles **clicks only**. There is no `on_scroll` handler.
+With the flag OFF, the mouse listener handles **clicks only** (no `on_scroll`). With the flag ON, `on_scroll` is registered and idle flush uses `scroll_coalesce_ms`.
 
-## 2. Problem / current behavior
+## 2. Problem / previous behavior (before F6)
 
-| Area | Today |
+| Area | Before F6 |
 |------|--------|
 | Mouse listener | `mouse.Listener(on_click=on_click)` only |
 | Scroll wheel / trackpad scroll | Not observed; not logged |
@@ -301,11 +301,11 @@ Write these tests **before** production scroll code. Prefer pure functions for b
 4. On successful flush, seal with F5 hook `scroll_coalesce` when F5 is enabled.
 5. Rebuild with `./scripts/rebuild_and_restart.sh` after logger changes; confirm certificate leaf; smoke-test by enabling config and checking `logs/daily_log_*.md` after a scroll burst.
 
-Do not implement until the T-F6-* tests exist and fail for the right reason.
+T-F6-* tests live under `tests/`; F6 is Implemented (FINAL_ACCEPT).
 
 ## Critic revision log
 
-**Verdict: ACCEPT**
+**Verdict: FINAL_ACCEPT**
 
 Changes applied in this revision:
 

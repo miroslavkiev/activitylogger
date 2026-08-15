@@ -49,11 +49,27 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
             "typing_pause_sec",
             "secure_field_cache_sec",
             "diag_min_interval_sec",
+            "secure_app_check_sec",
         }
     ),
     "privacy": frozenset({"secure_apps"}),
-    "ax": frozenset({"ax_queue_maxsize", "ax_max_depth", "screen_compare_max_chars"}),
-    "window_titles": frozenset({"activitywatch_enricher", "activitywatch_base_url"}),
+    "ax": frozenset(
+        {
+            "ax_queue_maxsize",
+            "ax_max_depth",
+            "screen_compare_max_chars",
+            "ax_max_children",
+            "ax_scan_debounce_sec",
+        }
+    ),
+    "window_titles": frozenset(
+        {
+            "activitywatch_enricher",
+            "activitywatch_base_url",
+            "aw_backoff_sec",
+        }
+    ),
+    "buffers": frozenset({"max_keystrokes", "max_events", "max_sections"}),
     "features": frozenset(
         {
             "browser_url_capture",
@@ -73,12 +89,19 @@ class AppConfig:
     typing_pause_sec: float
     secure_field_cache_sec: float
     diag_min_interval_sec: float
+    secure_app_check_sec: float
     secure_apps: tuple[str, ...]
     ax_queue_maxsize: int
     ax_max_depth: int
     screen_compare_max_chars: int
+    ax_max_children: int
+    ax_scan_debounce_sec: float
     activitywatch_enricher: bool
     activitywatch_base_url: str
+    aw_backoff_sec: float
+    max_keystrokes: int
+    max_events: int
+    max_sections: int
     browser_url_capture: bool
     capture_triggers_enabled: bool
     scroll_coalesce_enabled: bool
@@ -108,12 +131,19 @@ def default_config(*, home: Optional[Path] = None) -> AppConfig:
         typing_pause_sec=0.5,
         secure_field_cache_sec=0.35,
         diag_min_interval_sec=30.0,
+        secure_app_check_sec=0.15,
         secure_apps=DEFAULT_SECURE_APPS,
         ax_queue_maxsize=16,
         ax_max_depth=7,
         screen_compare_max_chars=4000,
+        ax_max_children=40,
+        ax_scan_debounce_sec=3.0,
         activitywatch_enricher=True,
         activitywatch_base_url="http://localhost:5600",
+        aw_backoff_sec=45.0,
+        max_keystrokes=2000,
+        max_events=500,
+        max_sections=200,
         browser_url_capture=False,
         capture_triggers_enabled=False,
         scroll_coalesce_enabled=False,
@@ -237,12 +267,26 @@ def _validate(cfg: AppConfig) -> None:
         raise ConfigError("timing.secure_field_cache_sec must be >= 0")
     if cfg.diag_min_interval_sec < 1:
         raise ConfigError("timing.diag_min_interval_sec must be >= 1")
+    if cfg.secure_app_check_sec < 0.05:
+        raise ConfigError("timing.secure_app_check_sec must be >= 0.05")
     if cfg.ax_queue_maxsize < 1:
         raise ConfigError("ax.ax_queue_maxsize must be >= 1")
     if not (1 <= cfg.ax_max_depth <= 32):
         raise ConfigError("ax.ax_max_depth must be in 1..32")
     if cfg.screen_compare_max_chars < 100:
         raise ConfigError("ax.screen_compare_max_chars must be >= 100")
+    if cfg.ax_max_children < 1:
+        raise ConfigError("ax.ax_max_children must be >= 1")
+    if cfg.ax_scan_debounce_sec < 0:
+        raise ConfigError("ax.ax_scan_debounce_sec must be >= 0")
+    if cfg.aw_backoff_sec < 1:
+        raise ConfigError("window_titles.aw_backoff_sec must be >= 1")
+    if cfg.max_keystrokes < 100:
+        raise ConfigError("buffers.max_keystrokes must be >= 100")
+    if cfg.max_events < 10:
+        raise ConfigError("buffers.max_events must be >= 10")
+    if cfg.max_sections < 10:
+        raise ConfigError("buffers.max_sections must be >= 10")
     if not (50 <= cfg.scroll_coalesce_ms <= 5000):
         raise ConfigError("features.scroll_coalesce_ms must be in 50..5000")
     url = cfg.activitywatch_base_url.strip()
@@ -290,6 +334,10 @@ def _merge_toml(data: Mapping[str, Any], base: AppConfig) -> AppConfig:
             values["diag_min_interval_sec"] = _require_number(
                 "timing", "diag_min_interval_sec", timing["diag_min_interval_sec"]
             )
+        if "secure_app_check_sec" in timing:
+            values["secure_app_check_sec"] = _require_number(
+                "timing", "secure_app_check_sec", timing["secure_app_check_sec"]
+            )
 
     privacy = data.get("privacy")
     if isinstance(privacy, Mapping) and "secure_apps" in privacy:
@@ -310,6 +358,14 @@ def _merge_toml(data: Mapping[str, Any], base: AppConfig) -> AppConfig:
             values["screen_compare_max_chars"] = _require_int(
                 "ax", "screen_compare_max_chars", ax["screen_compare_max_chars"]
             )
+        if "ax_max_children" in ax:
+            values["ax_max_children"] = _require_int(
+                "ax", "ax_max_children", ax["ax_max_children"]
+            )
+        if "ax_scan_debounce_sec" in ax:
+            values["ax_scan_debounce_sec"] = _require_number(
+                "ax", "ax_scan_debounce_sec", ax["ax_scan_debounce_sec"]
+            )
 
     wt = data.get("window_titles")
     if isinstance(wt, Mapping):
@@ -320,6 +376,25 @@ def _merge_toml(data: Mapping[str, Any], base: AppConfig) -> AppConfig:
         if "activitywatch_base_url" in wt:
             values["activitywatch_base_url"] = _require_str(
                 "window_titles", "activitywatch_base_url", wt["activitywatch_base_url"]
+            )
+        if "aw_backoff_sec" in wt:
+            values["aw_backoff_sec"] = _require_number(
+                "window_titles", "aw_backoff_sec", wt["aw_backoff_sec"]
+            )
+
+    buffers = data.get("buffers")
+    if isinstance(buffers, Mapping):
+        if "max_keystrokes" in buffers:
+            values["max_keystrokes"] = _require_int(
+                "buffers", "max_keystrokes", buffers["max_keystrokes"]
+            )
+        if "max_events" in buffers:
+            values["max_events"] = _require_int(
+                "buffers", "max_events", buffers["max_events"]
+            )
+        if "max_sections" in buffers:
+            values["max_sections"] = _require_int(
+                "buffers", "max_sections", buffers["max_sections"]
             )
 
     features = data.get("features")

@@ -4,7 +4,7 @@
 |-------|--------|
 | ID | F5 |
 | Priority | P1 |
-| Status | Implemented (F5_ACCEPT) |
+| Status | Implemented (F5_ACCEPT; FINAL_ACCEPT) |
 | Scope contract | [`00-SCOPE.md`](00-SCOPE.md) |
 | Depends on | Section model in `interleaved_logger.py`; cleaner parse in `clean_markdown_log.py`; F2 key `features.capture_triggers_enabled` |
 | Coordinates with | F3 (`typing_pause`), F4 (`url_change`), F6 (`scroll_coalesce`) |
@@ -18,7 +18,7 @@ The tag is one token from a **closed set**. The log stays human-readable. Gemini
 
 **Default: OFF.** F2 key `features.capture_triggers_enabled` defaults to `false` (opt-in). With the flag OFF, seal and Markdown behaviour match today (no trigger field, no click/clipboard seal from F5).
 
-## 2. Current behaviour (baseline)
+## 2. Previous behaviour (baseline before F5)
 
 As of the code under test today:
 
@@ -245,11 +245,13 @@ When the flag is ON, tests MUST reject any other string at the write boundary.
 
 ### FR-F5-010 — Gemini prompt update
 
-`prompts/gemini-automation-analysis.md` MUST document:
+`prompts/gemini-automation-analysis.md` documents:
 
 - optional ` · trigger:{name}` on the time line;
 - the closed set and short meanings;
 - that older logs and flag-OFF runs may omit the trigger.
+
+Do not re-edit that prompt in docs-only passes.
 
 ### FR-F5-011 — No sidecar formats
 
@@ -432,15 +434,14 @@ No migration script. No one-shot rewrite job.
 
 ## 12. Gemini prompt impact
 
-Update the **Data format** bullets in `prompts/gemini-automation-analysis.md`:
+Shipped Data format bullets in `prompts/gemini-automation-analysis.md` cover:
 
-1. After the time bullet, add: optional ` · trigger:{name}` on the same italic line.
-2. List the closed set with one-line meanings (table or bullets).
-3. Tell the model to use triggers when present to explain context switches and burst boundaries.
-4. Tell the model not to invent triggers for older sections that lack them.
-5. Keep existing guidance on keystrokes, hotkeys, clipboard, and clicks.
+1. Optional ` · trigger:{name}` on the same italic line.
+2. Closed set with one-line meanings.
+3. Use triggers when present; do not invent them for older sections.
+4. Existing guidance on keystrokes, hotkeys, clipboard, and clicks.
 
-Do not change the automation output schema (Week in review / Patterns / Suggested automations / Top 3).
+Do not re-edit that prompt in docs-only passes. Do not change the automation output schema (Week in review / Patterns / Suggested automations / Top 3).
 
 ## 13. Coordination matrix (F3 / F4 / F6)
 
@@ -464,8 +465,8 @@ Order:
 3. Extend section dict; update all `_sections.append` call sites behind the flag.
 4. Change click and clipboard paths to seal only when the flag is ON (FR-F5-005/006).
 5. Update `RE_TIMESTAMP_LINE` (or split legacy vs new predicates).
-6. Update Gemini prompt.
-7. Rebuild signed app only when implementing in production code: `./scripts/rebuild_and_restart.sh`.
+6. Gemini prompt already documents triggers (leave unchanged in docs-only work).
+7. Rebuild signed app only when the logger binary changed: `./scripts/rebuild_and_restart.sh`.
 
 Do not expand scope beyond Markdown section triggers.
 
@@ -491,7 +492,7 @@ Do not expand scope beyond Markdown section triggers.
 
 ## Critic revision log
 
-**Verdict: ACCEPT**
+**Verdict: FINAL_ACCEPT**
 
 | Checklist item | Finding | Change |
 |----------------|---------|--------|

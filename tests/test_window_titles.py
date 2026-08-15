@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import queue
+import time
 from unittest.mock import patch
 
 import pytest
@@ -11,34 +11,8 @@ import interleaved_logger as il
 
 
 @pytest.fixture(autouse=True)
-def _reset_logger_state():
-    with il._lock:
-        il._current_heading = ""
-        il._current_keystrokes.clear()
-        il._current_events.clear()
-        il._sections.clear()
-        il._last_screen_text = ""
-        il._pause_secure_app = False
-        il._pause_secure_field = False
-        il._is_paused = False
-        il._window_bucket = None
-        il._scan_pending = False
-    il.ACTIVITYWATCH_ENRICHER = True
-    il.AW_BASE_URL = "http://localhost:5600"
-    il.SECURE_APPS = {
-        "1password",
-        "bitwarden",
-        "keychain",
-        "keepass",
-        "lastpass",
-        "passwords",
-    }
-    while True:
-        try:
-            il._ax_jobs.get_nowait()
-            il._ax_jobs.task_done()
-        except queue.Empty:
-            break
+def _reset_logger_state(reset_logger_state):
+    reset_logger_state()
     yield
 
 
@@ -52,7 +26,17 @@ def test_resolve_window_prefers_native_over_aw():
     ):
         assert il.resolve_window() == ("Safari", "Docs")
         native.assert_called_once()
-        aw.assert_called_once()
+        # Native complete → skip ActivityWatch HTTP
+        aw.assert_not_called()
+
+
+def test_resolve_window_skips_aw_when_native_complete():
+    with (
+        patch.object(il, "get_native_window", return_value=("Safari", "Docs")),
+        patch.object(il, "get_activitywatch_window") as aw,
+    ):
+        assert il.resolve_window() == ("Safari", "Docs")
+        aw.assert_not_called()
 
 
 def test_resolve_window_aw_fills_empty_native_title():
@@ -118,7 +102,7 @@ def test_get_active_window_no_longer_sole_source():
 
     def native():
         order.append("native")
-        return ("Safari", "Docs")
+        return ("Safari", "")  # incomplete → AW may fill
 
     def aw():
         order.append("aw")
@@ -129,9 +113,30 @@ def test_get_active_window_no_longer_sole_source():
         patch.object(il, "get_activitywatch_window", side_effect=aw),
     ):
         result = il.resolve_window()
-    assert result == ("Safari", "Docs")
+    assert result == ("Safari", "AW")
     assert order[0] == "native"
     assert "aw" in order
+
+
+def test_resolve_window_aw_backoff_skips_http():
+    il._state.aw_backoff_until = time.monotonic() + 60.0
+    with (
+        patch.object(il, "get_native_window", return_value=("Safari", "")),
+        patch.object(il, "get_activitywatch_window") as aw,
+    ):
+        assert il.resolve_window() == ("Safari", "")
+        aw.assert_not_called()
+    il._state.aw_backoff_until = 0.0
+
+
+def test_activitywatch_failure_sets_backoff():
+    il._state.aw_backoff_until = 0.0
+    il._window_bucket = "aw-watcher-window_test"
+    with patch("interleaved_logger.requests.get", side_effect=RuntimeError("down")):
+        assert il.get_activitywatch_window() == ("", "")
+    assert il._state.aw_backoff_until > time.monotonic()
+    il._state.aw_backoff_until = 0.0
+    il._window_bucket = None
 
 
 # --- Heading / placeholder ---

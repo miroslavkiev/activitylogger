@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import queue
 import re
-from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,57 +11,16 @@ import pytest
 import browser_url as bu
 import interleaved_logger as il
 from config import default_config, load_config
+from tests.helpers import enable_features
 from window_titles import build_heading_body
 
 
 @pytest.fixture(autouse=True)
-def _reset_logger_state(tmp_path: Path):
-    cfg = replace(
-        default_config(),
-        log_dir=tmp_path / "logs",
-        browser_url_capture=False,
-        capture_triggers_enabled=False,
-    )
-    il.apply_config(cfg)
+def _reset_logger_state(reset_logger_state):
     bu.set_url_provider(None)
-    with il._lock:
-        il._current_heading = "App — Window"
-        il._current_keystrokes.clear()
-        il._current_events.clear()
-        il._sections.clear()
-        il._last_screen_text = ""
-        il._last_clipboard_count = 0
-        il._last_clipboard_text = ""
-        il._last_emitted_url = None
-        il._pause_secure_app = False
-        il._pause_secure_field = False
-        il._is_paused = False
-        il._current_modifiers.clear()
-        il._secure_field_cache = False
-        il._secure_field_cache_at = 0.0
-        il._window_bucket = None
-        il._scan_pending = False
-        il._last_key_activity_mono = None
-        il._last_key_flush_cause = None
-        il._key_flush_hook = None
-    while True:
-        try:
-            il._ax_jobs.get_nowait()
-            il._ax_jobs.task_done()
-        except queue.Empty:
-            break
+    reset_logger_state(browser_url_capture=False, capture_triggers_enabled=False)
     yield
     bu.set_url_provider(None)
-
-
-def _enable_url(tmp_path: Path, *, triggers: bool = False) -> None:
-    cfg = replace(
-        default_config(),
-        log_dir=tmp_path / "logs",
-        browser_url_capture=True,
-        capture_triggers_enabled=triggers,
-    )
-    il.apply_config(cfg)
 
 
 # --- Pure logic ---
@@ -250,7 +207,7 @@ def test_provider_failure_returns_none():
 
 
 def test_url_event_lands_under_current_heading(tmp_path: Path):
-    _enable_url(tmp_path)
+    enable_features(tmp_path, browser_url_capture=True)
     heading = build_heading_body("Google Chrome", "Title")
     assert heading is not None
     with il._lock:
@@ -269,10 +226,10 @@ def test_url_event_lands_under_current_heading(tmp_path: Path):
 
 
 def test_title_and_url_same_cycle_url_under_new_heading(tmp_path: Path):
-    _enable_url(tmp_path)
+    enable_features(tmp_path, browser_url_capture=True)
     with patch.object(il, "refresh_secure_field_focus", return_value=False):
         il.apply_resolved_window("Google Chrome", "Old Title")
-        il.apply_window_and_url_cycle(
+        il.process_window_check_cycle(
             "Google Chrome",
             "New Title",
             url="https://new.example/",
@@ -292,7 +249,7 @@ def test_flag_off_window_loop_skips_provider(tmp_path: Path):
     provider.get_url.return_value = "https://should-not-fetch.test"
     bu.set_url_provider(provider)
     with patch.object(il, "refresh_secure_field_focus", return_value=False):
-        il.run_window_check_iteration(
+        il.process_window_check_cycle(
             "Google Chrome",
             "Example",
             url_provider=provider,
@@ -301,7 +258,7 @@ def test_flag_off_window_loop_skips_provider(tmp_path: Path):
 
 
 def test_f4_alone_does_not_write_trigger_metadata(tmp_path: Path):
-    _enable_url(tmp_path, triggers=False)
+    enable_features(tmp_path, browser_url_capture=True, capture_triggers_enabled=False)
     with il._lock:
         il._current_heading = "Google Chrome — Example Domain"
         il._current_events.clear()
@@ -314,7 +271,7 @@ def test_f4_alone_does_not_write_trigger_metadata(tmp_path: Path):
 
 
 def test_f4_with_f5_seals_url_change(tmp_path: Path):
-    _enable_url(tmp_path, triggers=True)
+    enable_features(tmp_path, browser_url_capture=True, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "Google Chrome — Example Domain"
         il._current_events.clear()
@@ -330,7 +287,7 @@ def test_f4_with_f5_seals_url_change(tmp_path: Path):
 
 
 def test_secure_app_match_unchanged_with_url_helper(tmp_path: Path):
-    _enable_url(tmp_path)
+    enable_features(tmp_path, browser_url_capture=True)
     assert il._is_secure_app_name("1Password", "Vault") is True
     assert il._is_secure_app_name("Safari", "Example") is False
     last, event = bu.apply_url_observation(

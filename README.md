@@ -31,6 +31,32 @@ launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger
 
 Do not also add the same app as a Login Item. ActivityWatch is optional (fills empty titles only when `window_titles.activitywatch_enricher` is true).
 
+## Config (optional)
+
+Capture tunables live outside the signed app.
+Repo-root [`config.example.toml`](config.example.toml) is the human schema copy of code defaults.
+
+```bash
+mkdir -p ~/.config/activitylogger
+cp config.example.toml ~/.config/activitylogger/config.toml
+chmod 700 ~/.config/activitylogger
+chmod 600 ~/.config/activitylogger/config.toml
+```
+
+Edit feature flags in that file (for example `features.browser_url_capture`).
+
+- **Config-only edit:** restart the agent (no rebuild):
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger
+```
+
+- **Logger source change:** rebuild and restart:
+
+```bash
+./scripts/rebuild_and_restart.sh
+```
+
 ## After editing code
 
 ```bash

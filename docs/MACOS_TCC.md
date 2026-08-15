@@ -53,14 +53,14 @@ References (research, Aug 2026):
 ./scripts/rebuild_and_restart.sh
 ```
 
-Steps inside:
+Steps inside (internal only — do not run as standalone operator steps):
 
-1. `pyinstaller ActivityLoggerNative.spec --noconfirm`
+1. PyInstaller build of `ActivityLoggerNative.spec` (only via this script)
 2. `./scripts/sign_app.sh` (creates keychain identity + `.codesign/identity.p12` on first run)
 3. Abort if `codesign -d -r-` lacks `certificate leaf`
 4. `launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger`
 
-**Agents must use this script** after logger code changes. Bare `pyinstaller` alone is a process bug.
+**Agents must use this script** after logger code changes. Bare PyInstaller alone is a process bug.
 
 ### Install / replace Launch Agent (paths)
 
@@ -75,8 +75,25 @@ launchctl enable gui/$(id -u)/com.mk.activitylogger
 launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger
 ```
 
-`start_logger.sh` resolves the repo from its own directory (or `ACTIVITYLOGGER_REPO`).  
-Optional capture config: `~/.config/activitylogger/config.toml` (see `config.example.toml`).
+`start_logger.sh` resolves the repo from its own directory (or `ACTIVITYLOGGER_REPO`).
+
+### Capture config (`config.toml`)
+
+Defaults match the signed app. Optional operator file:
+
+```bash
+mkdir -p ~/.config/activitylogger
+cp config.example.toml ~/.config/activitylogger/config.toml
+chmod 700 ~/.config/activitylogger
+chmod 600 ~/.config/activitylogger/config.toml
+```
+
+Edit feature flags in that file. Config loads once at process start.
+
+| Change type | Action |
+|-------------|--------|
+| Config only | `launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger` — **no** rebuild |
+| Logger source / binary | `./scripts/rebuild_and_restart.sh` |
 
 ### First-time TCC (once per machine / once per new signing cert)
 
@@ -98,7 +115,8 @@ macOS may ask for **Automation** so ActivityLoggerNative can control Safari /
 Chrome / other scriptable browsers.
 
 1. Set `features.browser_url_capture = true` in `~/.config/activitylogger/config.toml`
-2. Rebuild/restart if the binary changed (`./scripts/rebuild_and_restart.sh`), else kickstart
+2. Config-only: `launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger`  
+   (If the binary also changed, use `./scripts/rebuild_and_restart.sh` instead.)
 3. Bring the browser to front; approve Automation prompts when shown
    (System Settings → Privacy & Security → **Automation** → ActivityLoggerNative)
 4. Navigate to a new URL; within ~ one `window_check_sec`, the daily log gains a

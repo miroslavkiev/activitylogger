@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import queue
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,52 +11,13 @@ import pytest
 
 import interleaved_logger as il
 from config import default_config
+from tests.helpers import _seed_keys
 
 
 @pytest.fixture(autouse=True)
-def _reset_logger_state(tmp_path: Path):
-    cfg = replace(
-        default_config(),
-        log_dir=tmp_path / "logs",
-        typing_pause_sec=0.5,
-        flush_interval_sec=30,
-    )
-    il.apply_config(cfg)
-    with il._lock:
-        il._current_heading = "App — Window"
-        il._current_keystrokes.clear()
-        il._current_events.clear()
-        il._sections.clear()
-        il._last_screen_text = ""
-        il._last_clipboard_count = 0
-        il._last_clipboard_text = ""
-        il._pause_secure_app = False
-        il._pause_secure_field = False
-        il._is_paused = False
-        il._current_modifiers.clear()
-        il._secure_field_cache = False
-        il._secure_field_cache_at = 0.0
-        il._window_bucket = None
-        il._scan_pending = False
-        if hasattr(il, "_last_key_activity_mono"):
-            il._last_key_activity_mono = None
-        if hasattr(il, "_last_key_flush_cause"):
-            il._last_key_flush_cause = None
-    while True:
-        try:
-            il._ax_jobs.get_nowait()
-            il._ax_jobs.task_done()
-        except queue.Empty:
-            break
+def _reset_logger_state(reset_logger_state):
+    reset_logger_state(typing_pause_sec=0.5, flush_interval_sec=30)
     yield
-
-
-def _seed_keys(tokens: list[str], *, at: float) -> None:
-    """Put tokens in the key buffer and mark activity at monotonic `at`."""
-    with il._lock:
-        il._current_keystrokes.clear()
-        il._current_keystrokes.extend(tokens)
-    il.note_key_activity(now=at)
 
 
 def _idle_check(now: float) -> bool:
@@ -384,7 +344,8 @@ def test_T_F3_21_later_file_flush_seal_not_typing_pause_trigger(tmp_path: Path):
             return super().append(item)
 
     with il._lock:
-        il._sections = _SpySections(il._sections)
+        il.rebind_capture_buffers()
+        il._sections = _SpySections(list(il._sections))
     try:
         il.flush_to_file()
         assert sealed, "file flush must seal open typing-pause events"
@@ -399,7 +360,11 @@ def test_T_F3_21_later_file_flush_seal_not_typing_pause_trigger(tmp_path: Path):
         assert "a" in text and "b" in text
     finally:
         with il._lock:
-            il._sections = list(il._sections)
+            # Restore LoggerState list identity after spy substitution.
+            data = list(il._sections)
+            il._state.sections.clear()
+            il._state.sections.extend(data)
+            il.rebind_capture_buffers()
 
 
 # --- Modifier-only and races ---

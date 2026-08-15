@@ -6,7 +6,13 @@
 # You cannot keep a stable cdhash across rebuilds; this is the durable alternative.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+_HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/resolve_repo_root.sh
+source "${_HERE}/lib/resolve_repo_root.sh"
+# shellcheck source=lib/require_certificate_leaf.sh
+source "${_HERE}/lib/require_certificate_leaf.sh"
+
+resolve_repo_root "${_HERE}/.."
 APP="${REPO}/dist/ActivityLoggerNative.app"
 CERT_NAME="${ACTIVITYLOGGER_CERT_NAME:-ActivityLogger Code Signing}"
 KEYCHAIN="${ACTIVITYLOGGER_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
@@ -77,7 +83,7 @@ EOF
 
 sign_app() {
   if [[ ! -d "$APP" ]]; then
-    echo "Missing $APP — build first: pyinstaller ActivityLoggerNative.spec --noconfirm" >&2
+    echo "Missing $APP — run: ./scripts/rebuild_and_restart.sh" >&2
     exit 1
   fi
 
@@ -88,12 +94,14 @@ sign_app() {
     "$APP"
 
   echo "Designated requirement:"
-  codesign -d -r- "$APP" 2>&1 | tail -5
-  if codesign -d -r- "$APP" 2>&1 | grep -q 'certificate leaf'; then
-    echo "OK: DR is certificate-anchored (TCC should survive rebuilds)."
-  else
-    echo "WARN: DR still looks cdhash-only; signing may have fallen back to ad-hoc." >&2
+  if ! DR="$(require_certificate_leaf "$APP")"; then
+    echo "$DR" | tail -5
+    echo "ERROR: DR lacks certificate leaf (ad-hoc/cdhash-only). Signing failed." >&2
+    echo "Fix: ensure '$CERT_NAME' is usable, then run: ./scripts/rebuild_and_restart.sh" >&2
+    exit 1
   fi
+  echo "$DR" | tail -5
+  echo "OK: DR is certificate-anchored (TCC should survive rebuilds)."
 }
 
 if ! have_identity; then

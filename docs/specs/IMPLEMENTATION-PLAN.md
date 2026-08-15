@@ -1,5 +1,7 @@
 # ActivityLogger F0–F6 Implementation Plan
 
+**Status:** Implemented (FINAL_ACCEPT) — historical build order for F0→F2→F1→F3→F5→F4→F6. See [`IMPL-STATUS.md`](IMPL-STATUS.md).
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Ship F0–F6 capture improvements in the locked order (F0 → F2 → F1 → F3 → F5 → F4 → F6) while the capture core stays one Python process inside the certificate-signed `.app`.
@@ -89,10 +91,10 @@ Env overrides (narrow): `ACTIVITYLOGGER_CONFIG` (path), `ACTIVITYLOGGER_LOG_DIR`
 | `com.mk.activitylogger.plist.template` | **Create** | Placeholders `@REPO@` |
 | `com.mk.activitylogger.plist` | **Retire** | Stop shipping absolute machine paths; template + install only |
 | `scripts/install_launch_agent.sh` | **Create** | Write machine-local plist |
-| `docs/examples/config.default.toml` | **Create** | Scaffold defaults |
+| `config.example.toml` | **Create** (repo root) | Scaffold defaults |
 | `docs/MACOS_TCC.md`, `AGENTS.md` | **Edit** | Config path + install notes; F0 doc contracts |
 | `clean_markdown_log.py` | **Edit** (F5) | Accept trigger timestamp line |
-| `prompts/gemini-automation-analysis.md` | **Edit** (F5) | Document trigger syntax |
+| `prompts/gemini-automation-analysis.md` | **Edit** (F5) | Document trigger syntax (shipped; leave unchanged in docs-only passes) |
 | `ActivityLoggerNative.spec` | **Edit** if needed | Bundle new modules; entry stays `interleaved_logger` |
 
 **Do not create:** second Launch Agent, JSONL/SQLite writers, media capture modules, cleaner secret-redaction stage.
@@ -204,7 +206,7 @@ pytest -q tests/test_privacy_and_cleaner.py tests/test_f0_constraints.py
 **Files:**
 - Create: `config.py`
 - Create: `tests/test_config.py`
-- Create: `docs/examples/config.default.toml` (scaffold content = §6 defaults)
+- Create: `config.example.toml` at repo root (scaffold content = §6 defaults)
 
 **Step 1 — Failing tests:** `TC-F2-01` defaults when file missing; `TC-F2-11` feature key round-trip; `TC-F2-18` no JSONL/SQLite fields on `AppConfig`.
 
@@ -501,7 +503,7 @@ pytest -q tests/test_capture_triggers.py -k "app_switch or file_flush or click o
 
 **Files:**
 - Modify: `clean_markdown_log.py` (timestamp regex accepts legacy + trigger line)
-- Modify: `prompts/gemini-automation-analysis.md`
+- Modify: `prompts/gemini-automation-analysis.md` (done in feature ship; do not re-edit in docs-only work)
 - Modify: `tests/test_capture_triggers.py`, possibly `tests/test_privacy_and_cleaner.py`
 
 **Step 1 — Failing tests:** T-F5-10…12, T-F5-15, T-F5-19.

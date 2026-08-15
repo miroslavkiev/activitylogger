@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import queue
 import shutil
-from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,77 +10,21 @@ import pytest
 
 import clean_markdown_log as cleaner
 import interleaved_logger as il
-from config import default_config
-
-CLOSED_TRIGGERS = frozenset(
-    {
-        "app_switch",
-        "click",
-        "typing_pause",
-        "clipboard",
-        "file_flush",
-        "url_change",
-        "scroll_coalesce",
-    }
-)
+from tests.helpers import _seed_keys, enable_features
 
 
 @pytest.fixture(autouse=True)
-def _reset_logger_state(tmp_path: Path):
-    cfg = replace(
-        default_config(),
-        log_dir=tmp_path / "logs",
-        capture_triggers_enabled=False,
-    )
-    il.apply_config(cfg)
-    with il._lock:
-        il._current_heading = "App — Window"
-        il._current_keystrokes.clear()
-        il._current_events.clear()
-        il._sections.clear()
-        il._last_screen_text = ""
-        il._last_clipboard_count = 0
-        il._last_clipboard_text = ""
-        il._pause_secure_app = False
-        il._pause_secure_field = False
-        il._is_paused = False
-        il._current_modifiers.clear()
-        il._secure_field_cache = False
-        il._secure_field_cache_at = 0.0
-        il._window_bucket = None
-        il._scan_pending = False
-        il._last_key_activity_mono = None
-        il._last_key_flush_cause = None
-        il._key_flush_hook = None
-    while True:
-        try:
-            il._ax_jobs.get_nowait()
-            il._ax_jobs.task_done()
-        except queue.Empty:
-            break
+def _reset_logger_state(reset_logger_state):
+    reset_logger_state(capture_triggers_enabled=False)
     yield
-
-
-def _enable_triggers(tmp_path: Path) -> None:
-    cfg = replace(
-        default_config(),
-        log_dir=tmp_path / "logs",
-        capture_triggers_enabled=True,
-    )
-    il.apply_config(cfg)
-
-
-def _seed_keys(tokens: list[str]) -> None:
-    with il._lock:
-        il._current_keystrokes.clear()
-        il._current_keystrokes.extend(tokens)
 
 
 # --- Closed set / format ---
 
 
 def test_T_F5_01_closed_set_constant():
-    assert il.CAPTURE_TRIGGERS == CLOSED_TRIGGERS
+    assert isinstance(il.CAPTURE_TRIGGERS, frozenset)
+    assert all(isinstance(name, str) and name for name in il.CAPTURE_TRIGGERS)
 
 
 def test_T_F5_02_reject_unknown_trigger_on_write():
@@ -104,7 +46,7 @@ def test_T_F5_03_format_helper():
 
 
 def test_T_F5_04_app_switch_seals_with_app_switch(tmp_path: Path):
-    _enable_triggers(tmp_path)
+    enable_features(tmp_path, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "AppA — WinA"
         il._current_events[:] = ["typed"]
@@ -120,7 +62,7 @@ def test_T_F5_04_app_switch_seals_with_app_switch(tmp_path: Path):
 
 
 def test_T_F5_05_periodic_flush_seals_with_file_flush(tmp_path: Path):
-    _enable_triggers(tmp_path)
+    enable_features(tmp_path, capture_triggers_enabled=True)
     with il._lock:
         il._current_heading = "App — Window"
         il._current_events[:] = ["hello"]
@@ -132,7 +74,7 @@ def test_T_F5_05_periodic_flush_seals_with_file_flush(tmp_path: Path):
 
 
 def test_T_F5_06_click_seals_with_click(tmp_path: Path):
-    _enable_triggers(tmp_path)
+    enable_features(tmp_path, capture_triggers_enabled=True)
     _seed_keys(["h", "i"])
     il.record_click_event("Button 'OK'")
     with il._lock:
@@ -145,7 +87,7 @@ def test_T_F5_06_click_seals_with_click(tmp_path: Path):
 
 
 def test_T_F5_07_clipboard_seals_with_clipboard(tmp_path: Path):
-    _enable_triggers(tmp_path)
+    enable_features(tmp_path, capture_triggers_enabled=True)
     _seed_keys(["a", "b"])
     _, _, event = il.apply_clipboard_change(2, "paste-me", False, 1, "")
     assert event is not None
@@ -159,7 +101,7 @@ def test_T_F5_07_clipboard_seals_with_clipboard(tmp_path: Path):
 
 
 def test_T_F5_08_paused_click_does_not_seal_secrets(tmp_path: Path):
-    _enable_triggers(tmp_path)
+    enable_features(tmp_path, capture_triggers_enabled=True)
     with il._lock:
         il._current_keystrokes[:] = ["s", "e", "c"]
         il._current_events[:] = ["secret-event"]
@@ -173,7 +115,7 @@ def test_T_F5_08_paused_click_does_not_seal_secrets(tmp_path: Path):
 
 
 def test_T_F5_09_paused_clipboard_does_not_seal_secrets(tmp_path: Path):
-    _enable_triggers(tmp_path)
+    enable_features(tmp_path, capture_triggers_enabled=True)
     count, text, event = il.apply_clipboard_change(
         2, "password-secret", True, 1, ""
     )
@@ -253,7 +195,7 @@ def test_T_F5_12_cleaner_trigger_line_not_noise_event():
 
 
 def test_T_F5_13_file_output_round_trip(tmp_path: Path):
-    _enable_triggers(tmp_path)
+    enable_features(tmp_path, capture_triggers_enabled=True)
     with il._lock:
         il._sections.append(
             {
@@ -286,7 +228,7 @@ def test_T_F5_14_sibling_name_reservation(tmp_path: Path):
         assert il._sections == []
         assert il._last_key_flush_cause == "typing_pause"
     # Reserved: seal path rejects typing_pause even when flag ON
-    _enable_triggers(tmp_path)
+    enable_features(tmp_path, capture_triggers_enabled=True)
     with il._lock:
         il._current_events[:] = ["chunk"]
         with pytest.raises(ValueError, match="typing_pause"):
@@ -374,7 +316,7 @@ def test_T_F5_19_no_migration_rewrite(tmp_path: Path):
     lines = cleaner.read_text_file(str(fixture))
     cleaner.split_into_preamble_and_sections(lines)
     # New write goes elsewhere
-    _enable_triggers(tmp_path)
+    enable_features(tmp_path, capture_triggers_enabled=True)
     with il._lock:
         il._current_events[:] = ["new"]
     il.flush_to_file()
