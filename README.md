@@ -1,40 +1,69 @@
 # ActivityLogger for macOS
 
-Records active windows, keystrokes, clicks, screen text, and clipboard into daily Markdown for LLM analysis.
+ActivityLogger records active windows, keystrokes, clicks, Accessibility text, optional browser URLs, and clipboard changes into private daily Markdown logs for local analysis.
 
-**Version:** 4.1.0 · **Runtime:** `dist/ActivityLoggerNative.app` · **Docs:** [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md) · [`AGENTS.md`](AGENTS.md)
+**Version:** 4.1.0 | **Runtime:** `dist/ActivityLoggerNative.app` | **Operations:** [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md)
 
-## Features
-- Native window titles (NSWorkspace + Accessibility); optional ActivityWatch enricher
-- Keystrokes / hotkeys, AX clicks, periodic screen text, clipboard (plaintext when not paused)
-- Privacy pause for password managers / AX secure fields; clipboard during pause is not logged later
+## Safety model
 
-## Setup (short)
+- Password managers and Accessibility secure fields pause every capture channel. Unknown privacy state fails closed.
+- Clipboard changes observed during a pause are consumed and are not logged later.
+- Browser URL capture is off by default. Safe mode removes user information and fragments and neutralizes the complete query string. The unsafe full-URL option is an explicit privacy-risk opt-in.
+- ActivityWatch enrichment is optional and accepts only loopback endpoints by default. Remote access requires an explicit unsafe opt-in.
+- Config, log, and generated output paths are checked and created with private permissions.
+- Logs are retained indefinitely until the operator archives or deletes them. There is no automatic deletion.
+
+## Canonical environment
+
+Use the exact interpreter in [`.python-version`](.python-version), currently Python 3.11.9, and the project-local `.venv`:
 
 ```bash
-cd ~/scripts/activitylogger
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-./scripts/rebuild_and_restart.sh   # build + certificate-sign + kickstart
+python3.11 -m venv .venv
+.venv/bin/python -m pip install --require-hashes -r requirements.txt
+.venv/bin/python -m pip check
+.venv/bin/ruff check --select E4,E7,E9,F .
+.venv/bin/python -m pip_audit --strict
+.venv/bin/python -m pytest -q
 ```
 
-1. Grant **`dist/ActivityLoggerNative.app`** → Accessibility **and** Input Monitoring (**once**)
-2. Install agent if needed:
+`requirements.txt` is the hash-locked macOS Apple silicon environment. Regenerate it only with `./scripts/compile_requirements.sh`.
+
+## One-time signing migration
+
+Before the first canonical rebuild, provision the dedicated signing keychain while the currently deployed app and legacy PKCS#12 file still exist:
+
+```bash
+./scripts/setup_signing_identity.sh --import-p12 .codesign/identity.p12
+```
+
+Use the native SecurityAgent prompts. Password environment variables are rejected. Provisioning verifies the supplied certificate against the deployed app, imports a nonextractable private key into the dedicated keychain, and pins the leaf SHA-1 fingerprint. `--rotate-identity` is only for an intentional identity change and warns that existing TCC grants will not follow.
+
+The 2026-08-21 migration, rebuild, exact-process restart, and capture smoke test succeeded. The legacy PKCS#12 and any redundant login-keychain copy remain private with mode `600` because deleting recovery identities is irreversible and requires explicit operator approval. They are not runtime blockers. Keep them out of shared backups until the operator archives or removes them deliberately.
+
+## Build, install, and TCC
+
+After provisioning, use only the canonical build:
+
+```bash
+./scripts/rebuild_and_restart.sh
+```
+
+It creates a staged PyInstaller onedir app and signs every nested Mach-O plus the outer bundle with the pinned identity and the sole Apple Events entitlement. Hardened Runtime is intentionally not enabled for the retained local self-signed leaf because macOS rejected that untrusted chain under Hardened Runtime. Verification instead enforces strict nested and outer signatures, the exact leaf and designated requirement, the bundle identifier, an exact entitlement allowlist, symlink containment, and Mach-O load-path containment.
+
+Before promotion, the build validates the installed Launch Agent, boots it out, proves exact-path processes are quiesced, and terminates only revalidated residual PIDs with bounded TERM then KILL escalation. After atomic promotion it bootstraps the Launch Agent and requires a fresh stable exact-path process. Failed proof restores the unchanged prevalidated bundle and bootstraps a fresh previous-app process.
+
+Install or reconcile the Launch Agent, then restart through the verified lifecycle:
 
 ```bash
 ./scripts/install_launch_agent.sh
-launchctl bootout gui/$(id -u)/com.mk.activitylogger 2>/dev/null || true
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mk.activitylogger.plist
-launchctl enable gui/$(id -u)/com.mk.activitylogger
-launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger
+./scripts/restart_logger.sh
 ```
 
-Do not also add the same app as a Login Item. ActivityWatch is optional (fills empty titles only when `window_titles.activitywatch_enricher` is true).
+The installed plist is mode `600` and requires `KeepAlive=true`, `RunAtLoad=true`, and `Umask=63`.
 
-## Config (optional)
+Grant `dist/ActivityLoggerNative.app` Accessibility and Input Monitoring. Optional browser Apple Events may prompt for Automation only when browser URL capture is enabled. Do not add the app as both a Login Item and a Launch Agent.
 
-Capture tunables live outside the signed app.
-Repo-root [`config.example.toml`](config.example.toml) is the human schema copy of code defaults.
+## Config
 
 ```bash
 mkdir -p ~/.config/activitylogger
@@ -43,32 +72,28 @@ chmod 700 ~/.config/activitylogger
 chmod 600 ~/.config/activitylogger/config.toml
 ```
 
-Edit feature flags in that file (for example `features.browser_url_capture`).
-
-- **Config-only edit:** restart the agent (no rebuild):
+Config is trusted local operator input and loads once at process start. The loader rejects unsafe file ownership, links, permissions, malformed values, and out-of-range resource limits. For a config-only edit, run:
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.mk.activitylogger
+./scripts/restart_logger.sh
 ```
 
-- **Logger source change:** rebuild and restart:
+Use `./scripts/rebuild_and_restart.sh` after source changes.
+
+## Logs and compaction
+
+Daily logs live at `logs/daily_log_YYYY-MM-DD.md` in a mode `700` directory with mode `600` files. The compactor is plaintext restructuring, not sanitization or redaction:
 
 ```bash
-./scripts/rebuild_and_restart.sh
+.venv/bin/python compact_markdown_log.py logs/daily_log_YYYY-MM-DD.md
 ```
 
-## After editing code
+It writes a mode `600` result atomically. Oversized sections pass through unchanged after a warning so memory stays bounded and content is not silently lost. Manually review and redact every result before sending it to an external LLM. Prefer local processing and keep FileVault enabled. Archive or delete old logs only through an operator-managed, verified workflow.
 
-```bash
-./scripts/rebuild_and_restart.sh
-```
+## Current verification
 
-Uses a self-signed Code Signing cert so TCC survives rebuilds (no cdhash churn). Confirm typing updates `logs/daily_log_*.md`.
+The 2026-08-21 signing import, leaf continuity, canonical rebuild, strict deployed verification, bundle identifier, exact Apple Events-only entitlement, Automation purpose metadata, safe tamper rejection, load containment, and private modes were verified. Pinned leaf is `0a609d91ba3541a2b9589363974fa460be0f091c`.
 
-## Logs
-- `logs/daily_log_YYYY-MM-DD.md` (dir mode `700`)
-- `python3 clean_markdown_log.py logs/daily_log_YYYY-MM-DD.md` before LLM paste
-- Prompt: `prompts/gemini-automation-analysis.md`
+The final source suite passed all 335 checks. The strict deployed codesign test passed separately after the final rebuild and is not added again to that count. Ruff critical rules, dependency consistency, strict dependency audit, shell and plist validation, byte compilation, diff checks, and forbidden-dash scans passed. CI is pinned to `macos-15`.
 
-## Tests
-`pytest -q`
+The mandatory final rebuild passed staged construction, signing, old-app prevalidation, atomic promotion, Launch Agent bootstrap, and fresh-process health proof. Final native PID `88019` started at 12:57:05 CEST and remained stable with wrapper PID `85208` running. A real typing smoke grew the private daily log to 112,535 bytes at 12:57:44 CEST. A bounded post-start macOS security-log check found no kill, deny-mmap, or library-validation enforcement for the final process.

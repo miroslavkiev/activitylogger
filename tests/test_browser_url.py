@@ -1,4 +1,4 @@
-"""F4 browser URL capture — TDD cases from docs/specs/F4-browser-url.md §11."""
+"""F4 browser URL capture cases from docs/specs/F4-browser-url.md section 11."""
 
 from __future__ import annotations
 
@@ -18,9 +18,11 @@ from window_titles import build_heading_body
 @pytest.fixture(autouse=True)
 def _reset_logger_state(reset_logger_state):
     bu.set_url_provider(None)
+    bu.set_unsafe_full_browser_urls(False)
     reset_logger_state(browser_url_capture=False, capture_triggers_enabled=False)
     yield
     bu.set_url_provider(None)
+    bu.set_unsafe_full_browser_urls(False)
 
 
 # --- Pure logic ---
@@ -148,6 +150,63 @@ def test_url_longer_than_2000_truncated():
     assert last == norm
 
 
+def test_url_privacy_redacts_secrets_and_preserves_query_shape():
+    raw = "https://user:pass@example.test/a?token=secret&blank=&flag&token=two#private"
+    assert bu.normalize_url_candidate(raw) == (
+        "https://example.test/a?REDACTED=REDACTED&REDACTED=REDACTED&"
+        "REDACTED=REDACTED&REDACTED=REDACTED"
+    )
+    assert bu.normalize_url_candidate(raw, unsafe_full=True) == (
+        "https://example.test/a?token=secret&blank=&flag&token=two"
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "ftp://example.test/file",
+        "javascript:alert(1)",
+        "https:///missing-host",
+        "https://",
+        "/relative/path",
+        "https://example.test:bad/path",
+    ),
+)
+def test_url_requires_http_scheme_and_valid_hostname(raw):
+    assert bu.normalize_url_candidate(raw) is None
+    assert bu.normalize_url_candidate(raw, unsafe_full=True) is None
+
+
+def test_url_is_parsed_before_cap_and_always_drops_userinfo_and_fragment():
+    raw = (
+        "https://"
+        + ("user" * 1000)
+        + ":password@example.test/path?token=secret#"
+        + ("private" * 1000)
+    )
+    assert bu.normalize_url_candidate(raw) == (
+        "https://example.test/path?REDACTED=REDACTED"
+    )
+    assert bu.normalize_url_candidate(raw, unsafe_full=True) == (
+        "https://example.test/path?token=secret"
+    )
+
+
+@pytest.mark.parametrize("control", ("\x00", "\x1f", "\n", "\x7f"))
+def test_url_control_characters_are_rejected_in_all_modes(control):
+    raw = f"https://example.test/path{control}Injected"
+    assert bu.normalize_url_candidate(raw) is None
+    assert bu.normalize_url_candidate(raw, unsafe_full=True) is None
+
+
+def test_process_url_privacy_mode_is_configurable():
+    raw = "https://user:pass@example.test/?token=secret#private"
+    bu.set_unsafe_full_browser_urls(True)
+    assert bu.normalize_url_candidate(raw) == "https://example.test/?token=secret"
+    bu.set_unsafe_full_browser_urls(False)
+    assert bu.normalize_url_candidate(raw) == "https://example.test/?REDACTED=REDACTED"
+
+
 def test_is_browser_app_positive_negative():
     positives = (
         "Safari",
@@ -201,6 +260,81 @@ def test_provider_failure_returns_none():
 
     got = bu.resolve_browser_url_sources("Safari", ax_fetch=boom, ae_fetch=boom)
     assert got is None
+
+
+def test_provider_backs_off_failed_sources_across_calls():
+    now = [100.0]
+    calls = {"ax": 0, "ae": 0}
+
+    def ax_fetch(_app):
+        calls["ax"] += 1
+        return None
+
+    def ae_fetch(_app):
+        calls["ae"] += 1
+        return "https://example.test"
+
+    provider = bu.MacBrowserUrlProvider(
+        ax_fetch=ax_fetch,
+        ae_fetch=ae_fetch,
+        backoff_sec=30,
+        clock=lambda: now[0],
+    )
+    assert provider.get_url("Safari") == "https://example.test"
+    assert provider.get_url("Safari") == "https://example.test"
+    assert calls == {"ax": 1, "ae": 2}
+    assert provider.get_url("Google Chrome") == "https://example.test"
+    assert calls == {"ax": 2, "ae": 3}
+    now[0] += 31
+    assert provider.get_url("Safari") == "https://example.test"
+    assert calls == {"ax": 3, "ae": 4}
+
+
+def test_ax_tree_walk_has_a_global_node_budget(monkeypatch):
+    calls = 0
+
+    def fake_attr(element, name):
+        nonlocal calls
+        if name == "AXURL":
+            calls += 1
+        if name == "AXChildren":
+            return [(element, index) for index in range(12)]
+        return None
+
+    monkeypatch.setattr(bu, "_ax_attr", fake_attr)
+    assert bu._ax_find_url_in_tree("root", 0, 10000, max_nodes=7) is None
+    assert calls == 7
+
+
+def test_ax_tree_walk_stops_at_deadline(monkeypatch):
+    calls = 0
+    now = [0.0]
+
+    def fake_clock():
+        now[0] += 0.04
+        return now[0]
+
+    def fake_attr(element, name):
+        nonlocal calls
+        if name == "AXURL":
+            calls += 1
+        if name == "AXChildren":
+            return [(element, index) for index in range(12)]
+        return None
+
+    monkeypatch.setattr(bu, "_ax_attr", fake_attr)
+    assert (
+        bu._ax_find_url_in_tree(
+            "root",
+            0,
+            10000,
+            max_nodes=1000,
+            deadline=0.1,
+            clock=fake_clock,
+        )
+        is None
+    )
+    assert calls == 2
 
 
 # --- Integration-style ---
@@ -260,7 +394,7 @@ def test_flag_off_window_loop_skips_provider(tmp_path: Path):
 def test_f4_alone_does_not_write_trigger_metadata(tmp_path: Path):
     enable_features(tmp_path, browser_url_capture=True, capture_triggers_enabled=False)
     with il._lock:
-        il._current_heading = "Google Chrome — Example Domain"
+        il._current_heading = "Google Chrome \u2014 Example Domain"
         il._current_events.clear()
         il._sections.clear()
     il.record_browser_url_observation("https://example.com/")
@@ -273,7 +407,7 @@ def test_f4_alone_does_not_write_trigger_metadata(tmp_path: Path):
 def test_f4_with_f5_seals_url_change(tmp_path: Path):
     enable_features(tmp_path, browser_url_capture=True, capture_triggers_enabled=True)
     with il._lock:
-        il._current_heading = "Google Chrome — Example Domain"
+        il._current_heading = "Google Chrome \u2014 Example Domain"
         il._current_events.clear()
         il._sections.clear()
         il._last_emitted_url = None
@@ -299,7 +433,7 @@ def test_secure_app_match_unchanged_with_url_helper(tmp_path: Path):
     assert event is not None
     assert last is not None
     assert il._is_secure_app_name("1Password", "Vault") is True
-    assert il._is_secure_app_name("Safari", "Bitwarden — Login") is True
+    assert il._is_secure_app_name("Safari", "Bitwarden \u2014 Login") is True
 
 
 # --- Constraint / grep guards ---

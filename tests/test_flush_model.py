@@ -1,4 +1,4 @@
-"""F3 typing-pause flush model — TDD cases T-F3-01…24."""
+"""F3 typing-pause flush model, TDD cases T-F3-01 through T-F3-24."""
 
 from __future__ import annotations
 
@@ -272,7 +272,7 @@ def test_T_F3_17_heading_change_with_prior_burst_and_buffer():
 
 def test_T_F3_18_flush_to_file_seals_open_events(tmp_path: Path):
     with il._lock:
-        il._current_heading = "App — Win"
+        il._current_heading = "App - Win"
         il._current_events[:] = ["hello", "world"]
         il._current_keystrokes.clear()
     il.flush_to_file()
@@ -289,16 +289,16 @@ def test_T_F3_19_file_writer_uses_flush_interval_sec():
     cfg = replace(default_config(), log_dir=Path(il.LOG_DIR), flush_interval_sec=5)
     il.apply_config(cfg)
     assert il.FLUSH_INTERVAL_SEC == 5
-    slept: list[float] = []
+    waited: list[float] = []
 
-    def _sleep(sec: float) -> None:
-        slept.append(sec)
+    def _wait(sec: float) -> bool:
+        waited.append(sec)
         raise StopIteration
 
-    with patch.object(il.time, "sleep", side_effect=_sleep):
+    with patch.object(il._writer_wakeup, "wait", side_effect=_wait):
         with pytest.raises(StopIteration):
             il.file_writer_loop()
-    assert slept[0] == 5
+    assert waited[0] == 5
 
 
 # --- F5 reason / trigger contract ---

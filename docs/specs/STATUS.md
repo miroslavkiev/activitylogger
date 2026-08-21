@@ -1,61 +1,29 @@
-# Spec review status
+# Specification status
 
-| Spec | Status |
-|------|--------|
-| [00-MASTER.md](00-MASTER.md) | **CONSISTENT_ACCEPT** (R3 independent aggregate verifier) |
-| [00-SCOPE.md](00-SCOPE.md) | locked |
-| [F0-constraints-and-non-goals.md](F0-constraints-and-non-goals.md) | ACCEPT |
-| [F1-window-titles.md](F1-window-titles.md) | ACCEPT (aligned to F2 `[window_titles]`; §6.2 cross-ref fix) |
-| [F2-config.md](F2-config.md) | ACCEPT (canonical schema) |
-| [F3-flush-model.md](F3-flush-model.md) | ACCEPT (`typing_pause_sec=0.5`; no seal) |
-| [F4-browser-url.md](F4-browser-url.md) | ACCEPT (`browser_url_capture`; F4 seals `url_change` when F5 ON) |
-| [F5-capture-triggers.md](F5-capture-triggers.md) | ACCEPT (opt-in; `typing_pause` reserved; §6 syntax refs) |
-| [F6-scroll-coalescing.md](F6-scroll-coalescing.md) | ACCEPT (`scroll_coalesce_ms=400`) |
+**Closeout date:** 2026-08-21
 
-## Aggregate critic note (2026-08-15)
+| Specification | Current status |
+|---|---|
+| [`00-MASTER.md`](00-MASTER.md) | Current aggregate contract |
+| [`F0-constraints-and-non-goals.md`](F0-constraints-and-non-goals.md) | Safety constraints implemented and tested |
+| [`F1-window-titles.md`](F1-window-titles.md) | Native-first resolution and local-only ActivityWatch default implemented |
+| [`F2-config.md`](F2-config.md) | Schema, trust validation, limits, and unsafe-option warnings implemented |
+| [`F3-flush-model.md`](F3-flush-model.md) | Serialized transactional persistence, deadline timers, and lifecycle implemented |
+| [`F4-browser-url.md`](F4-browser-url.md) | Opt-in capture and safe total query neutralization implemented |
+| [`F5-capture-triggers.md`](F5-capture-triggers.md) | Closed triggers, injection hardening, and ordered click reservations implemented |
+| [`F6-scroll-coalescing.md`](F6-scroll-coalescing.md) | Opt-in bounded burst and exact deadline behavior implemented |
 
-Prior pass closed R1 config-key tensions. See [`00-MASTER.md`](00-MASTER.md) §3 and the aggregate revision log.
+## QA gate
 
-| Former tension | Locked resolution |
-|----------------|-------------------|
-| F2 vs F5 enable | `capture_triggers_enabled = false` (opt-in) in F2 + F5 |
-| F2 vs F3 idle | `typing_pause_sec = 0.5` |
-| F2 vs F6 scroll ms | `scroll_coalesce_ms = 400` |
-| F2 vs F4 URL key | `browser_url_capture` |
-| F3 vs F5 typing_pause | F3 keys→events only; F5 name reserved |
-| F1 vs F2 AW keys | `window_titles.activitywatch_*` |
+- Three primary hardening loops and the final lifecycle, isolation, and Launch Agent loops completed with no remaining runtime or security source finding.
+- All 335 source tests passed; the strict deployed codesign test passed separately after the final rebuild.
+- Dependency consistency, lint, strict dependency audit, shell syntax, and plist validation passed.
+- CI uses `macos-15`, Python 3.11.9, hashed installation, staged signing, exact verification, and tamper rejection.
 
-## Independent aggregate verifier (2026-08-15)
+## Live deployment gate
 
-| Finding | Fix |
-|---------|-----|
-| F4 / F5 / MASTER disagreed on who seals for `url_change` | Locked: F5 OFF → event only; both ON → **F4 seals** with `url_change` |
-| F5 Goal / Flag ON cited §5 for Markdown syntax | Point to §6 (sole normative grammar) |
-| F1 resolver cited §8 for placeholders | Point to §6.2 |
+The interactive identity import, dedicated nonextractable keychain, pinned leaf continuity, staged bundle construction, strict deployed nested and outer verification, exact Apple Events-only entitlement, load containment, and safe tamper rejection passed. Pinned leaf is `0a609d91ba3541a2b9589363974fa460be0f091c`. Hardened Runtime is intentionally not enabled for the retained local self-signed no-Team-ID leaf.
 
-**Verdict: NEEDS_ANOTHER_ROUND** — re-check seal wording across F4, F5, and `00-MASTER.md` after these edits.
+The mandatory final rebuild succeeded. The installed Launch Agent is mode `600` with `KeepAlive=true`, `RunAtLoad=true`, and `Umask=63`. Exact native PID `88019` started at 12:57:05 CEST and remained stable; wrapper PID `85208` was running with one run and no prior exit. A real typing smoke grew the mode `600` daily log to 112,535 bytes at 12:57:44 CEST, and bounded post-rebuild security-log review found no kill, deny-mmap, or library-validation enforcement.
 
-## R3 independent aggregate verifier (2026-08-15)
-
-Re-verified R2 locks and full quick sweep. No remaining inconsistencies. No further fixes.
-
-| Check | Result |
-|-------|--------|
-| F4 / F5 / MASTER `url_change` seal ownership | Agree: F5 OFF → URL event only; F4 ON + F5 ON → F4 seals with `url_change` |
-| F5 Markdown syntax sole at §6 | No stale §5 syntax refs |
-| F1 placeholder → §6.2 | Correct |
-| Leftover `typing_pause_ms` / 800, scroll 250, `browser_url_enabled`, triggers always-on, F3 emit `typing_pause` seal | None in normative text (rejected-alias / history only) |
-
-**Verdict: CONSISTENT_ACCEPT**
-
-## Final implementation aggregate gate (2026-08-15)
-
-Product job remains: personal macOS input transcript → daily Markdown → cleaner → Gemini. Not a Screenpipe clone.
-
-| Check | Result |
-|-------|--------|
-| F0–F6 vs MASTER / SCOPE | Pass |
-| Suite `pytest -q tests/` | 161 passed |
-| Signed production app | `certificate leaf` present; sources not newer than binary |
-
-**Verdict: FINAL_ACCEPT** — see [`IMPL-STATUS.md`](IMPL-STATUS.md).
+The legacy `.codesign/identity.p12` and any redundant login-keychain identity remain mode `600`. Archival or irreversible deletion requires explicit operator approval. This recovery-asset decision is not a runtime blocker.

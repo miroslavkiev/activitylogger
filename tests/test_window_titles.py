@@ -1,4 +1,4 @@
-"""F1 — native-first window titles (TDD)."""
+"""F1 native-first window titles (TDD)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 import interleaved_logger as il
+from markdown_format import format_markdown_fenced_text, sanitize_markdown_inline
 
 
 @pytest.fixture(autouse=True)
@@ -144,21 +145,38 @@ def test_activitywatch_failure_sets_backoff():
 
 def test_heading_uses_unknown_window_not_aw_hint():
     body = il.build_heading_body("Safari", "")
-    assert body == "Safari — Unknown window"
+    assert body == "Safari \u2014 Unknown window"
     assert "ActivityWatch" not in body
     assert not hasattr(il, "AW_HINT")
+
+
+def test_heading_normalizes_untrusted_multiline_metadata():
+    body = il.build_heading_body("  Safari\t", "Docs\n## injected\x00 title  ")
+    assert body == "Safari \u2014 Docs ## injected title"
+    assert "\n" not in body
+    assert "\x00" not in body
+
+
+def test_shared_inline_sanitizer_and_fence_are_structurally_safe():
+    assert sanitize_markdown_inline(" A\r\n\tB\x7f\x85 C ") == "A B C"
+    block = format_markdown_fenced_text("alpha\n```\n````\nomega", "text")
+    lines = block.splitlines()
+    assert lines[0] == "`````text"
+    assert lines[-1] == "`````"
+    assert "```" in lines
+    assert "````" in lines
 
 
 def test_heading_uses_em_dash_separator():
     body = il.build_heading_body("Safari", "Docs")
     assert body is not None
-    assert " — " in body
+    assert " \u2014 " in body
     assert "\u2014" in body
-    assert " - " not in body.replace(" — ", "")
+    assert " - " not in body.replace(" \u2014 ", "")
 
 
 def test_fallback_heading_has_no_aw_instruction():
-    assert il.FALLBACK_HEADING == "Unknown — Unknown window"
+    assert il.FALLBACK_HEADING == "Unknown \u2014 Unknown window"
     assert "ActivityWatch not running" not in il.FALLBACK_HEADING
     assert "ActivityWatch" not in il.FALLBACK_HEADING
 
@@ -172,17 +190,17 @@ def test_markdown_section_line_format(tmp_path, monkeypatch):
         il._current_events.append("typed hello")
     il.flush_to_file()
     text = (tmp_path / "daily_log_test.md").read_text(encoding="utf-8")
-    assert "## Safari — Example" in text
+    assert "## Safari \u2014 Example" in text
     assert "typed hello" in text
 
 
 def test_both_empty_skips_heading_update():
     with il._lock:
-        il._current_heading = "Keep — Me"
+        il._current_heading = "Keep \u2014 Me"
     applied = il.apply_resolved_window("", "")
     assert applied is False
     with il._lock:
-        assert il._current_heading == "Keep — Me"
+        assert il._current_heading == "Keep \u2014 Me"
 
 
 # --- Secure pause inputs ---
@@ -200,12 +218,12 @@ def test_secure_pause_from_native_app_name():
 
 
 def test_secure_pause_from_native_title_token():
-    assert il._is_secure_app_name("Safari", "Bitwarden — Login") is True
+    assert il._is_secure_app_name("Safari", "Bitwarden \u2014 Login") is True
     with patch.object(il, "refresh_secure_field_focus", return_value=False):
-        assert il.apply_resolved_window("Safari", "Bitwarden — Login") is True
+        assert il.apply_resolved_window("Safari", "Bitwarden \u2014 Login") is True
     assert il._pause_secure_app is True
     with il._lock:
-        assert "Bitwarden — Login" in il._current_heading
+        assert "Bitwarden \u2014 Login" in il._current_heading
         assert il._current_heading.startswith("🔒 [SECURE APP PAUSED] ")
 
 
@@ -224,7 +242,7 @@ def test_secure_pause_uses_same_pair_as_heading():
     with il._lock:
         heading = il._current_heading
     assert il._is_secure_app_name(app, title) is True
-    assert heading == f"🔒 [SECURE APP PAUSED] {app} — {title}"
+    assert heading == f"🔒 [SECURE APP PAUSED] {app} \u2014 {title}"
     assert "Unknown window" not in heading
 
 
@@ -234,4 +252,4 @@ def test_secure_pause_empty_title_uses_unknown_window_placeholder():
         assert il.apply_resolved_window("1Password", "") is True
     assert il._pause_secure_app is True
     with il._lock:
-        assert il._current_heading == "🔒 [SECURE APP PAUSED] 1Password — Unknown window"
+        assert il._current_heading == "🔒 [SECURE APP PAUSED] 1Password \u2014 Unknown window"

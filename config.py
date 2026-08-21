@@ -5,12 +5,15 @@ Load once at process start. Key names match docs/specs/F2-config.md §6.
 
 from __future__ import annotations
 
+import ipaddress
+import math
 import os
 import stat
 import sys
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
+from urllib.parse import urlsplit
 
 try:
     import tomllib  # Python 3.11+
@@ -52,7 +55,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
             "secure_app_check_sec",
         }
     ),
-    "privacy": frozenset({"secure_apps"}),
+    "privacy": frozenset({"secure_apps", "unsafe_full_browser_urls"}),
     "ax": frozenset(
         {
             "ax_queue_maxsize",
@@ -66,6 +69,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
         {
             "activitywatch_enricher",
             "activitywatch_base_url",
+            "activitywatch_allow_remote",
             "aw_backoff_sec",
         }
     ),
@@ -91,6 +95,7 @@ class AppConfig:
     diag_min_interval_sec: float
     secure_app_check_sec: float
     secure_apps: tuple[str, ...]
+    unsafe_full_browser_urls: bool
     ax_queue_maxsize: int
     ax_max_depth: int
     screen_compare_max_chars: int
@@ -98,6 +103,7 @@ class AppConfig:
     ax_scan_debounce_sec: float
     activitywatch_enricher: bool
     activitywatch_base_url: str
+    activitywatch_allow_remote: bool
     aw_backoff_sec: float
     max_keystrokes: int
     max_events: int
@@ -133,6 +139,7 @@ def default_config(*, home: Optional[Path] = None) -> AppConfig:
         diag_min_interval_sec=30.0,
         secure_app_check_sec=0.15,
         secure_apps=DEFAULT_SECURE_APPS,
+        unsafe_full_browser_urls=False,
         ax_queue_maxsize=16,
         ax_max_depth=7,
         screen_compare_max_chars=4000,
@@ -140,6 +147,7 @@ def default_config(*, home: Optional[Path] = None) -> AppConfig:
         ax_scan_debounce_sec=3.0,
         activitywatch_enricher=True,
         activitywatch_base_url="http://localhost:5600",
+        activitywatch_allow_remote=False,
         aw_backoff_sec=45.0,
         max_keystrokes=2000,
         max_events=500,
@@ -222,14 +230,21 @@ def _require_bool(section: str, key: str, value: Any) -> bool:
 def _require_number(section: str, key: str, value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ConfigError(f"{section}.{key} must be a number, got {type(value).__name__}")
-    return float(value)
+    try:
+        number = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ConfigError(f"{section}.{key} must be finite") from exc
+    if not math.isfinite(number):
+        raise ConfigError(f"{section}.{key} must be finite")
+    return number
 
 
 def _require_int(section: str, key: str, value: Any) -> int:
-    num = _require_number(section, key, value)
-    if int(num) != num:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigError(f"{section}.{key} must be a number, got {type(value).__name__}")
+    if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
         raise ConfigError(f"{section}.{key} must be an integer")
-    return int(num)
+    return int(value)
 
 
 def _require_str(section: str, key: str, value: Any) -> str:
@@ -257,50 +272,63 @@ def _collect_unknown(data: Mapping[str, Any], warn: WarnFn) -> None:
 
 
 def _validate(cfg: AppConfig) -> None:
-    if cfg.window_check_sec < 1:
-        raise ConfigError("timing.window_check_sec must be >= 1")
-    if cfg.flush_interval_sec < 1:
-        raise ConfigError("timing.flush_interval_sec must be >= 1")
-    if cfg.typing_pause_sec < 0.05:
-        raise ConfigError("timing.typing_pause_sec must be >= 0.05")
-    if cfg.secure_field_cache_sec < 0:
-        raise ConfigError("timing.secure_field_cache_sec must be >= 0")
-    if cfg.diag_min_interval_sec < 1:
-        raise ConfigError("timing.diag_min_interval_sec must be >= 1")
-    if cfg.secure_app_check_sec < 0.05:
-        raise ConfigError("timing.secure_app_check_sec must be >= 0.05")
-    if cfg.ax_queue_maxsize < 1:
-        raise ConfigError("ax.ax_queue_maxsize must be >= 1")
-    if not (1 <= cfg.ax_max_depth <= 32):
-        raise ConfigError("ax.ax_max_depth must be in 1..32")
-    if cfg.screen_compare_max_chars < 100:
-        raise ConfigError("ax.screen_compare_max_chars must be >= 100")
-    if cfg.ax_max_children < 1:
-        raise ConfigError("ax.ax_max_children must be >= 1")
-    if cfg.ax_scan_debounce_sec < 0:
-        raise ConfigError("ax.ax_scan_debounce_sec must be >= 0")
-    if cfg.aw_backoff_sec < 1:
-        raise ConfigError("window_titles.aw_backoff_sec must be >= 1")
-    if cfg.max_keystrokes < 100:
-        raise ConfigError("buffers.max_keystrokes must be >= 100")
-    if cfg.max_events < 10:
-        raise ConfigError("buffers.max_events must be >= 10")
-    if cfg.max_sections < 10:
-        raise ConfigError("buffers.max_sections must be >= 10")
-    if not (50 <= cfg.scroll_coalesce_ms <= 5000):
-        raise ConfigError("features.scroll_coalesce_ms must be in 50..5000")
+    bounds = (
+        ("timing.window_check_sec", cfg.window_check_sec, 1, 3600),
+        ("timing.flush_interval_sec", cfg.flush_interval_sec, 1, 3600),
+        ("timing.typing_pause_sec", cfg.typing_pause_sec, 0.05, 60),
+        ("timing.secure_field_cache_sec", cfg.secure_field_cache_sec, 0, 60),
+        ("timing.diag_min_interval_sec", cfg.diag_min_interval_sec, 1, 86400),
+        ("timing.secure_app_check_sec", cfg.secure_app_check_sec, 0.05, 60),
+        ("ax.ax_queue_maxsize", cfg.ax_queue_maxsize, 1, 10000),
+        ("ax.ax_max_depth", cfg.ax_max_depth, 1, 32),
+        ("ax.screen_compare_max_chars", cfg.screen_compare_max_chars, 100, 1000000),
+        ("ax.ax_max_children", cfg.ax_max_children, 1, 10000),
+        ("ax.ax_scan_debounce_sec", cfg.ax_scan_debounce_sec, 0, 3600),
+        ("window_titles.aw_backoff_sec", cfg.aw_backoff_sec, 1, 86400),
+        ("buffers.max_keystrokes", cfg.max_keystrokes, 100, 1000000),
+        ("buffers.max_events", cfg.max_events, 10, 100000),
+        ("buffers.max_sections", cfg.max_sections, 10, 10000),
+        ("features.scroll_coalesce_ms", cfg.scroll_coalesce_ms, 50, 5000),
+    )
+    for name, value, minimum, maximum in bounds:
+        try:
+            valid = math.isfinite(float(value)) and minimum <= value <= maximum
+        except (TypeError, ValueError, OverflowError):
+            valid = False
+        if not valid:
+            raise ConfigError(f"{name} must be in {minimum}..{maximum}")
     url = cfg.activitywatch_base_url.strip()
     if not url:
         raise ConfigError("window_titles.activitywatch_base_url must be non-empty")
-    if not (url.startswith("http://") or url.startswith("https://")):
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname
+    except ValueError as exc:
+        raise ConfigError("window_titles.activitywatch_base_url is invalid") from exc
+    if parsed.scheme not in {"http", "https"} or not host:
         raise ConfigError(
-            "window_titles.activitywatch_base_url must start with http:// or https://"
+            "window_titles.activitywatch_base_url must be an HTTP(S) URL with a host"
         )
+    if parsed.username is not None or parsed.password is not None:
+        raise ConfigError(
+            "window_titles.activitywatch_base_url must not contain userinfo"
+        )
+    if not cfg.activitywatch_allow_remote:
+        normalized_host = host.casefold().rstrip(".")
+        try:
+            is_loopback = ipaddress.ip_address(normalized_host).is_loopback
+        except ValueError:
+            is_loopback = normalized_host == "localhost"
+        if not is_loopback:
+            raise ConfigError(
+                "window_titles.activitywatch_base_url must use a loopback host unless "
+                "activitywatch_allow_remote is true"
+            )
     if not cfg.log_dir.is_absolute():
         raise ConfigError("paths.log_dir must be absolute after expansion")
     for item in cfg.secure_apps:
-        if not isinstance(item, str):
-            raise ConfigError("privacy.secure_apps must be a list of strings")
+        if not isinstance(item, str) or not item:
+            raise ConfigError("privacy.secure_apps entries must be non-empty strings")
 
 
 def _merge_toml(data: Mapping[str, Any], base: AppConfig) -> AppConfig:
@@ -340,11 +368,19 @@ def _merge_toml(data: Mapping[str, Any], base: AppConfig) -> AppConfig:
             )
 
     privacy = data.get("privacy")
-    if isinstance(privacy, Mapping) and "secure_apps" in privacy:
-        raw = privacy["secure_apps"]
-        if not isinstance(raw, list) or any(not isinstance(x, str) for x in raw):
-            raise ConfigError("privacy.secure_apps must be a list of strings")
-        values["secure_apps"] = tuple(raw)
+    if isinstance(privacy, Mapping):
+        if "secure_apps" in privacy:
+            raw = privacy["secure_apps"]
+            if not isinstance(raw, list) or any(not isinstance(x, str) for x in raw):
+                raise ConfigError("privacy.secure_apps must be a list of strings")
+            normalized = tuple(item.strip().casefold() for item in raw)
+            if any(not item for item in normalized):
+                raise ConfigError("privacy.secure_apps entries must be non-empty strings")
+            values["secure_apps"] = normalized
+        if "unsafe_full_browser_urls" in privacy:
+            values["unsafe_full_browser_urls"] = _require_bool(
+                "privacy", "unsafe_full_browser_urls", privacy["unsafe_full_browser_urls"]
+            )
 
     ax = data.get("ax")
     if isinstance(ax, Mapping):
@@ -376,6 +412,12 @@ def _merge_toml(data: Mapping[str, Any], base: AppConfig) -> AppConfig:
         if "activitywatch_base_url" in wt:
             values["activitywatch_base_url"] = _require_str(
                 "window_titles", "activitywatch_base_url", wt["activitywatch_base_url"]
+            )
+        if "activitywatch_allow_remote" in wt:
+            values["activitywatch_allow_remote"] = _require_bool(
+                "window_titles",
+                "activitywatch_allow_remote",
+                wt["activitywatch_allow_remote"],
             )
         if "aw_backoff_sec" in wt:
             values["aw_backoff_sec"] = _require_number(
@@ -423,11 +465,35 @@ def _merge_toml(data: Mapping[str, Any], base: AppConfig) -> AppConfig:
     return AppConfig(**values, config_path=None)
 
 
-def _read_toml(path: Path) -> Mapping[str, Any]:
+def _read_toml(path: Path, warn: WarnFn) -> Mapping[str, Any]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = -1
     try:
-        raw = path.read_bytes()
+        fd = os.open(path, flags)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ConfigError(f"config path is not a regular file: {path}")
+        if info.st_uid != os.getuid():
+            raise ConfigError(f"config file must be owned by the current user: {path}")
+        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise ConfigError(f"config file must not be group- or world-writable: {path}")
+        if info.st_mode & (stat.S_IRGRP | stat.S_IROTH):
+            warn(
+                f"config: {path} is group- or world-readable; "
+                "recommend mode 0600 for operational privacy"
+            )
+        if info.st_size > 1024 * 1024:
+            raise ConfigError(f"config file exceeds 1 MiB: {path}")
+        with os.fdopen(fd, "rb") as config_file:
+            fd = -1
+            raw = config_file.read(1024 * 1024 + 1)
     except OSError as exc:
         raise ConfigError(f"config file unreadable: {path}: {exc}") from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    if len(raw) > 1024 * 1024:
+        raise ConfigError(f"config file exceeds 1 MiB: {path}")
     try:
         data = tomllib.loads(raw.decode("utf-8"))
     except Exception as exc:
@@ -437,26 +503,67 @@ def _read_toml(path: Path) -> Mapping[str, Any]:
     return data
 
 
-def _warn_permissions(path: Path, warn: WarnFn) -> None:
-    try:
-        mode = path.stat().st_mode
-    except OSError:
-        return
-    if mode & (stat.S_IRGRP | stat.S_IROTH):
-        warn(
-            f"config: {path} is group- or world-readable; "
-            "recommend mode 0600 for operational privacy"
-        )
-
-
 def ensure_log_dir(log_dir: Path) -> Path:
-    """Create log_dir with mode 0700. Fatal on failure."""
+    """Create a private owned log_dir without mutating shared directories."""
+    created = False
+    fd = -1
     try:
-        log_dir.mkdir(parents=True, exist_ok=True)
-        os.chmod(log_dir, 0o700)
+        try:
+            info = log_dir.lstat()
+        except FileNotFoundError:
+            log_dir.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            try:
+                os.mkdir(log_dir, 0o700)
+                created = True
+            except FileExistsError:
+                pass
+            info = log_dir.lstat()
+
+        if stat.S_ISLNK(info.st_mode):
+            raise ConfigError(f"log_dir must not be a symlink: {log_dir}")
+        if not stat.S_ISDIR(info.st_mode):
+            raise ConfigError(f"log_dir is not a directory: {log_dir}")
+
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        fd = os.open(log_dir, flags)
+        info = os.fstat(fd)
+        if not stat.S_ISDIR(info.st_mode):
+            raise ConfigError(f"log_dir is not a directory: {log_dir}")
+        if info.st_uid != os.getuid():
+            raise ConfigError(f"log_dir must be owned by the current user: {log_dir}")
+
+        mode = stat.S_IMODE(info.st_mode)
+        if created:
+            os.fchmod(fd, 0o700)
+        elif mode != 0o700:
+            raise ConfigError(
+                f"refusing to chmod existing non-private log_dir {log_dir} "
+                f"(mode {mode:04o})"
+            )
     except OSError as exc:
-        raise ConfigError(f"cannot create log_dir {log_dir}: {exc}") from exc
+        raise ConfigError(f"cannot safely create log_dir {log_dir}: {exc}") from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
     return log_dir
+
+
+def _warn_unsafe_config(cfg: AppConfig, warn: WarnFn) -> None:
+    if cfg.unsafe_full_browser_urls:
+        warn(
+            "config: WARNING privacy.unsafe_full_browser_urls=true may log "
+            "sensitive URL query values"
+        )
+    if cfg.activitywatch_allow_remote:
+        warn(
+            "config: WARNING window_titles.activitywatch_allow_remote=true sends "
+            "ActivityWatch requests beyond the local host"
+        )
 
 
 def load_config(
@@ -485,10 +592,10 @@ def load_config(
         if env_log:
             cfg = replace(cfg, log_dir=_expand_log_dir(env_log))
         _validate(cfg)
+        _warn_unsafe_config(cfg, warn_fn)
         return cfg
 
-    _warn_permissions(resolved, warn_fn)
-    data = _read_toml(resolved)
+    data = _read_toml(resolved, warn_fn)
     _collect_unknown(data, warn_fn)
     cfg = replace(_merge_toml(data, base), config_path=resolved)
 
@@ -497,6 +604,7 @@ def load_config(
         cfg = replace(cfg, log_dir=_expand_log_dir(env_log))
 
     _validate(cfg)
+    _warn_unsafe_config(cfg, warn_fn)
     return cfg
 
 
@@ -506,7 +614,9 @@ def startup_diag_line(cfg: AppConfig) -> str:
     return (
         f"config_path={path_s} log_dir={cfg.log_dir} "
         f"activitywatch_enricher={cfg.activitywatch_enricher} "
+        f"activitywatch_allow_remote={cfg.activitywatch_allow_remote} "
         f"browser_url_capture={cfg.browser_url_capture} "
+        f"unsafe_full_browser_urls={cfg.unsafe_full_browser_urls} "
         f"capture_triggers_enabled={cfg.capture_triggers_enabled} "
         f"scroll_coalesce_enabled={cfg.scroll_coalesce_enabled}"
     )

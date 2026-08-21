@@ -14,12 +14,11 @@
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<dict>
-		<key>SuccessfulExit</key>
-		<false/>
-	</dict>
+	<true/>
 	<key>ThrottleInterval</key>
 	<integer>15</integer>
+	<key>Umask</key>
+	<integer>63</integer>
 	<key>StandardOutPath</key>
 	<string>@REPO@/logs/launchd-stdout.log</string>
 	<key>StandardErrorPath</key>

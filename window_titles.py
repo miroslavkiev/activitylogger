@@ -1,4 +1,4 @@
-"""F1 window title helpers — heading placeholders and merge rules.
+"""F1 window title helpers - heading placeholders and merge rules.
 
 Native resolve and ActivityWatch HTTP live in interleaved_logger (AppKit / requests).
 This module stays free of AppKit so unit tests can import merge/heading logic alone.
@@ -6,17 +6,21 @@ This module stays free of AppKit so unit tests can import merge/heading logic al
 
 from __future__ import annotations
 
+from markdown_format import sanitize_markdown_inline
+
 UNKNOWN_WINDOW = "Unknown window"
-FALLBACK_HEADING = f"Unknown — {UNKNOWN_WINDOW}"
-EM_DASH = " — "  # U+2014 with surrounding spaces
+EM_DASH = " \u2014 "
+FALLBACK_HEADING = f"Unknown{EM_DASH}{UNKNOWN_WINDOW}"
 
 
 def build_heading_body(app: str, title: str) -> str | None:
-    """Build `{app} — {title}` body. Return None when both fields are empty."""
-    if not app and not title:
+    """Build one normalized app and title heading body."""
+    clean_app = sanitize_markdown_inline(app)
+    clean_title = sanitize_markdown_inline(title)
+    if not clean_app and not clean_title:
         return None
-    display_app = app if app else "Unknown"
-    display_title = title if title else UNKNOWN_WINDOW
+    display_app = clean_app or "Unknown"
+    display_title = clean_title or UNKNOWN_WINDOW
     return f"{display_app}{EM_DASH}{display_title}"
 
 

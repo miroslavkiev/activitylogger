@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-python-311:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11.9'
+          cache: pip
+      - name: Install locked dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r requirements.txt
+          .venv/bin/python -m pip check
+      - name: Lint and audit dependencies
+        run: |
+          .venv/bin/ruff check --select E4,E7,E9,F .
+          .venv/bin/python -m pip_audit --strict
+      - name: Run tests
+        run: .venv/bin/python -m pytest -q
+      - name: Validate scripts and property lists
+        run: |
+          while IFS= read -r -d '' script; do bash -n "$script"; done < <(find . -type f -name '*.sh' -print0)
+          plutil -lint com.mk.activitylogger.plist.template ActivityLoggerNative.entitlements
+      - name: Provision ephemeral identity, build, sign, and verify
+        env:
+          ACTIVITYLOGGER_CI_EPHEMERAL: '1'
+          ACTIVITYLOGGER_SKIP_RESTART: '1'
+        run: |
+          ./scripts/setup_signing_identity.sh --create-ephemeral-ci
+          ./scripts/rebuild_and_restart.sh
+      - name: Run signed operations checks
+        run: .venv/bin/python -m pytest -q tests/test_ops_smokes.py
+      - name: Reject a tampered bundle
+        run: |
+          cp -R dist/ActivityLoggerNative.app /tmp/ActivityLoggerNative-tampered.app
+          printf 'tamper' >> /tmp/ActivityLoggerNative-tampered.app/Contents/MacOS/ActivityLoggerNative
+          if scripts/lib/require_certificate_leaf.sh /tmp/ActivityLoggerNative-tampered.app; then
+            echo 'FATAL: signature verifier accepted tampered code' >&2
+            exit 1
+          fi

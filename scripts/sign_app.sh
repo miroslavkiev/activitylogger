@@ -1,9 +1,6 @@
 #!/bin/bash
-# Create (if needed) a self-signed Code Signing identity and sign
-# dist/ActivityLoggerNative.app so TCC grants survive rebuilds.
-#
-# Stable TCC uses certificate leaf in the designated requirement, not cdhash.
-# You cannot keep a stable cdhash across rebuilds; this is the durable alternative.
+# Sign an existing app with the pre-provisioned, pinned local identity.
+# Identity creation and migration are deliberately separate from normal builds.
 set -euo pipefail
 
 _HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -13,98 +10,109 @@ source "${_HERE}/lib/resolve_repo_root.sh"
 source "${_HERE}/lib/require_certificate_leaf.sh"
 
 resolve_repo_root "${_HERE}/.."
-APP="${REPO}/dist/ActivityLoggerNative.app"
-CERT_NAME="${ACTIVITYLOGGER_CERT_NAME:-ActivityLogger Code Signing}"
-KEYCHAIN="${ACTIVITYLOGGER_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
-IDENTITY_FILE="${REPO}/.codesign/identity.p12"
-IDENTITY_DIR="$(dirname "$IDENTITY_FILE")"
-# Local-only P12 password (not used for Apple trust; just PKCS#12 wrapping)
-P12_PASS="${ACTIVITYLOGGER_P12_PASS:-activitylogger-local-codesign}"
+APP="${ACTIVITYLOGGER_APP:-${REPO}/dist/ActivityLoggerNative.app}"
+KEYCHAIN="${ACTIVITYLOGGER_KEYCHAIN:-${REPO}/.codesign/activitylogger-signing.keychain-db}"
+PIN_FILE="${ACTIVITYLOGGER_CERT_FINGERPRINT_FILE:-${REPO}/.codesign/leaf.sha1}"
+ENTITLEMENTS="${REPO}/ActivityLoggerNative.entitlements"
+BUNDLE_ID="com.mk.activitylogger.native"
+SCAN_DIR=""
 
-have_identity() {
-  security find-identity -p codesigning "$KEYCHAIN" 2>/dev/null | grep -F "$CERT_NAME" >/dev/null
-}
-
-create_identity() {
-  echo "Creating self-signed Code Signing identity: $CERT_NAME"
-  mkdir -p "$IDENTITY_DIR"
-  chmod 700 "$IDENTITY_DIR"
-
-  local tmp
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/al-codesign.XXXXXX")"
-  trap 'rm -rf "$tmp"' RETURN
-
-  cat >"$tmp/openssl.cnf" <<EOF
-[req]
-distinguished_name = dn
-x509_extensions = codesign
-prompt = no
-
-[dn]
-CN = ${CERT_NAME}
-
-[codesign]
-basicConstraints = critical,CA:FALSE
-keyUsage = critical,digitalSignature
-extendedKeyUsage = critical,codeSigning
-EOF
-
-  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-    -keyout "$tmp/key.pem" -out "$tmp/cert.pem" \
-    -config "$tmp/openssl.cnf"
-
-  openssl pkcs12 -export \
-    -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
-    -out "$IDENTITY_FILE" -passout "pass:${P12_PASS}" \
-    -name "$CERT_NAME"
-
-  chmod 600 "$IDENTITY_FILE"
-
-  # Allow codesign to use the key without interactive ACL prompts where possible
-  security unlock-keychain "$KEYCHAIN" 2>/dev/null || true
-  security import "$IDENTITY_FILE" -k "$KEYCHAIN" -P "$P12_PASS" \
-    -T /usr/bin/codesign -T /usr/bin/security \
-    -f pkcs12 2>/dev/null \
-    || security import "$IDENTITY_FILE" -k "$KEYCHAIN" -P "$P12_PASS" \
-         -T /usr/bin/codesign -T /usr/bin/security
-
-  # Best-effort: mark key partition for codesign (may fail if login keychain has a password)
-  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private \
-    -k "" "$KEYCHAIN" 2>/dev/null || true
-
-  if ! have_identity; then
-    echo "ERROR: identity imported but not visible to codesign." >&2
-    echo "Open Keychain Access, find '$CERT_NAME', and allow codesign access." >&2
-    exit 1
+cleanup() {
+  if [[ -n "$SCAN_DIR" ]]; then
+    /bin/rm -rf -- "$SCAN_DIR"
   fi
-  echo "Identity ready in keychain: $CERT_NAME"
-  echo "PKCS#12 backup (gitignored): $IDENTITY_FILE"
 }
+trap cleanup EXIT
 
-sign_app() {
-  if [[ ! -d "$APP" ]]; then
-    echo "Missing $APP — run: ./scripts/rebuild_and_restart.sh" >&2
-    exit 1
-  fi
-
-  echo "Signing $APP with: $CERT_NAME"
-  codesign --force --deep \
-    --sign "$CERT_NAME" \
-    --identifier com.mk.activitylogger.native \
-    "$APP"
-
-  echo "Designated requirement:"
-  if ! DR="$(require_certificate_leaf "$APP")"; then
-    echo "$DR" | tail -5
-    echo "ERROR: DR lacks certificate leaf (ad-hoc/cdhash-only). Signing failed." >&2
-    echo "Fix: ensure '$CERT_NAME' is usable, then run: ./scripts/rebuild_and_restart.sh" >&2
-    exit 1
-  fi
-  echo "$DR" | tail -5
-  echo "OK: DR is certificate-anchored (TCC should survive rebuilds)."
-}
-
-if ! have_identity; then
-  create_identity
+if [[ ! -d "$APP" ]]; then
+  echo "FATAL: missing app bundle: $APP" >&2
+  exit 1
 fi
-sign_app
+if [[ ! -f "$KEYCHAIN" ]]; then
+  echo "FATAL: missing dedicated signing keychain: $KEYCHAIN" >&2
+  echo "Run scripts/setup_signing_identity.sh first." >&2
+  exit 1
+fi
+if [[ ! -f "$PIN_FILE" ]]; then
+  echo "FATAL: missing pinned certificate fingerprint: $PIN_FILE" >&2
+  exit 1
+fi
+
+FINGERPRINT="$(tr -d '[:space:]' < "$PIN_FILE" | tr '[:upper:]' '[:lower:]')"
+if [[ ! "$FINGERPRINT" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "FATAL: invalid certificate fingerprint in $PIN_FILE" >&2
+  exit 1
+fi
+
+if [[ "${ACTIVITYLOGGER_CI_EPHEMERAL:-0}" == "1" ]]; then
+  if [[ "${CI:-}" != "true" ]]; then
+    echo "FATAL: ACTIVITYLOGGER_CI_EPHEMERAL is restricted to CI." >&2
+    exit 2
+  fi
+  unset ACTIVITYLOGGER_KEYCHAIN_PASSWORD ACTIVITYLOGGER_P12_PASS
+else
+  if [[ -n "${ACTIVITYLOGGER_KEYCHAIN_PASSWORD:-}" || -n "${ACTIVITYLOGGER_P12_PASS:-}" ]]; then
+    unset ACTIVITYLOGGER_KEYCHAIN_PASSWORD ACTIVITYLOGGER_P12_PASS
+    echo "FATAL: password environment variables are not accepted. Use the native keychain prompt." >&2
+    exit 2
+  fi
+  unset ACTIVITYLOGGER_KEYCHAIN_PASSWORD ACTIVITYLOGGER_P12_PASS
+  /usr/bin/security unlock-keychain -u "$KEYCHAIN"
+fi
+IDENTITY_OUTPUT="$(/usr/bin/security find-identity -v -p codesigning "$KEYCHAIN")" || {
+  echo "FATAL: cannot enumerate code-signing identities in $KEYCHAIN" >&2
+  exit 1
+}
+IDENTITY_FINGERPRINTS="$(
+  printf '%s\n' "$IDENTITY_OUTPUT" \
+    | /usr/bin/sed -nE 's/^[[:space:]]*[0-9]+\) ([0-9A-Fa-f]{40}) .*/\1/p' \
+    | /usr/bin/tr '[:upper:]' '[:lower:]'
+)"
+IDENTITY_COUNT="$(
+  printf '%s\n' "$IDENTITY_FINGERPRINTS" \
+    | /usr/bin/awk 'NF { count++ } END { print count + 0 }'
+)"
+IDENTITY_FINGERPRINT="$(
+  printf '%s\n' "$IDENTITY_FINGERPRINTS" | /usr/bin/awk 'NF { print; exit }'
+)"
+if [[ "$IDENTITY_COUNT" != "1" || "$IDENTITY_FINGERPRINT" != "$FINGERPRINT" ]]; then
+  echo "FATAL: dedicated keychain must contain exactly one valid identity equal to the pinned leaf." >&2
+  exit 1
+fi
+
+echo "Signing nested Mach-O code with pinned identity $FINGERPRINT"
+if [[ ! -d "$APP/Contents/Frameworks" ]]; then
+  echo "FATAL: expected onedir Frameworks directory is missing." >&2
+  exit 1
+fi
+MAIN_EXECUTABLE="$APP/Contents/MacOS/ActivityLoggerNative"
+if [[ ! -f "$MAIN_EXECUTABLE" || -L "$MAIN_EXECUTABLE" ]]; then
+  echo "FATAL: expected a regular, non-symlink main executable: $MAIN_EXECUTABLE" >&2
+  exit 1
+fi
+SCAN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/activitylogger-sign-scan.XXXXXX")"
+if ! /usr/bin/find "$APP/Contents" -type f -print0 > "$SCAN_DIR/files"; then
+  echo "FATAL: cannot enumerate bundled files for signing." >&2
+  exit 1
+fi
+while IFS= read -r -d '' candidate; do
+  [[ "$candidate" != "$MAIN_EXECUTABLE" ]] || continue
+  if ! description="$(/usr/bin/file -b "$candidate")"; then
+    echo "FATAL: cannot classify bundled file before signing: $candidate" >&2
+    exit 1
+  fi
+  if [[ "$description" == *Mach-O* ]]; then
+    /usr/bin/codesign --force --timestamp=none \
+      --keychain "$KEYCHAIN" --sign "$FINGERPRINT" "$candidate"
+  fi
+done < "$SCAN_DIR/files"
+
+echo "Signing app bundle"
+/usr/bin/codesign --force --timestamp=none \
+  --entitlements "$ENTITLEMENTS" \
+  --identifier "$BUNDLE_ID" \
+  --keychain "$KEYCHAIN" \
+  --sign "$FINGERPRINT" \
+  "$APP"
+
+ACTIVITYLOGGER_CERT_SHA1="$FINGERPRINT" verify_activitylogger_app "$APP"

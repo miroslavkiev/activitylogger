@@ -1,4 +1,4 @@
-# ActivityLogger capture config (F2) — defaults
+# ActivityLogger capture config (F2) defaults
 # Copy to ~/.config/activitylogger/config.toml and edit as needed.
 # chmod 700 ~/.config/activitylogger && chmod 600 ~/.config/activitylogger/config.toml
 
@@ -14,6 +14,10 @@ diag_min_interval_sec = 30.0
 secure_app_check_sec = 0.15
 
 [privacy]
+# Default URL mode removes user information and fragments, then neutralizes
+# every query name and value. Setting this true may expose sensitive path and
+# query data. The loader emits a warning for this explicit unsafe opt-in.
+unsafe_full_browser_urls = false
 secure_apps = [
   "1password",
   "bitwarden",
@@ -33,6 +37,9 @@ ax_scan_debounce_sec = 3.0
 [window_titles]
 activitywatch_enricher = true
 activitywatch_base_url = "http://localhost:5600"
+# Loopback is required by default. Enabling remote access sends window context
+# over the network and emits a warning.
+activitywatch_allow_remote = false
 aw_backoff_sec = 45.0
 
 [buffers]

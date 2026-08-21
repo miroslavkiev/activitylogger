@@ -22,6 +22,7 @@ env/
 
 # PyInstaller artifacts (rebuild locally; do not commit binaries)
 build/
+.build-stage.*/
 dist/
 *.app/
 ActivityLoggerNative

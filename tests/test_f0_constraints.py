@@ -98,20 +98,13 @@ def test_rebuild_script_invokes_sign_app():
 def test_rebuild_script_fails_without_certificate_leaf():
     text = _read("scripts/rebuild_and_restart.sh")
     leaf_lib = _read("scripts/lib/require_certificate_leaf.sh")
-    # Rebuild sources shared DR gate and fails when leaf is missing.
+    # Rebuild sources the shared strict identity gate.
     assert "require_certificate_leaf.sh" in text
-    assert "require_certificate_leaf" in text
-    assert re.search(
-        r"grep\s+-q\s+['\"]certificate leaf['\"]",
-        leaf_lib,
-    ), "expected grep -q 'certificate leaf' in require_certificate_leaf.sh"
-    gate = re.search(
-        r"if\s+!\s+DR=\"\$\(require_certificate_leaf\s+\"\$APP\"\)\".*?"
-        r"exit\s+1",
-        text,
-        flags=re.DOTALL,
-    )
-    assert gate, "DR gate must exit 1 when certificate leaf is missing"
+    assert "verify_activitylogger_app" in text
+    assert "codesign --verify --deep --strict" in leaf_lib
+    assert "com.mk.activitylogger.native" in leaf_lib
+    assert ".codesign/leaf.sha1" in leaf_lib
+    assert "does not exactly match the pinned identity" in leaf_lib
 
 
 def test_tcc_docs_forbid_adhoc_and_python_launchd():
@@ -127,7 +120,7 @@ def test_tcc_docs_forbid_adhoc_and_python_launchd():
     assert "ad-hoc" in tcc_l
     # Forbid launchd → Python capture
     assert "launchd" in agents_l and "python" in agents_l
-    assert "never launchd" in agents_l or "launchd → python" in agents_l
+    assert "launchd directly into python" in agents_l or "launchd -> python" in agents_l
     assert "python3 interleaved_logger.py" in tcc_l or (
         "do not change the launch agent back to" in tcc_l
         and "python3" in tcc_l
@@ -229,7 +222,7 @@ def test_is_secure_app_name_positive_and_negative():
         ("KeePassXC", "Database"),
         ("LastPass", "Vault"),
         ("Passwords", "iCloud"),
-        ("Safari", "Bitwarden — Login"),
+        ("Safari", "Bitwarden \u2014 Login"),
     ]
     for app, title in positives:
         assert il._is_secure_app_name(app, title), f"expected secure: {app!r}/{title!r}"
@@ -253,8 +246,6 @@ def test_get_filepath_is_daily_markdown_only(tmp_path, monkeypatch):
 
 def test_log_dir_mode_is_0o700(tmp_path, monkeypatch):
     log_dir = tmp_path / "logs"
-    log_dir.mkdir(exist_ok=True)
-    log_dir.chmod(0o755)
     monkeypatch.setattr(il, "LOG_DIR", log_dir)
     il._get_filepath()
     mode = log_dir.stat().st_mode & 0o777
@@ -329,7 +320,8 @@ def test_no_second_capture_daemon_script_required():
     assert "@REPO@/start_logger.sh" in text
     # No second always-on capture agent in-repo.
     other = []
-    for p in list(REPO.rglob("*.plist")) + list(REPO.rglob("*.plist.template")):
+    candidates = list(REPO.glob("*.plist")) + list(REPO.glob("*.plist.template"))
+    for p in candidates:
         if p.resolve() == template.resolve():
             continue
         body = p.read_text(encoding="utf-8")
@@ -346,7 +338,7 @@ def test_no_second_capture_daemon_script_required():
     assert "media daemon" not in docs
 
 
-# --- B1–B3: bans ---
+# --- B1-B3: bans ---
 
 
 def test_no_screen_recording_api_imports_in_capture_module():

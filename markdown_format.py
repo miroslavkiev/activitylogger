@@ -7,8 +7,9 @@ stable F4 URL event prefix.
 from __future__ import annotations
 
 import re
+import unicodedata
 
-# F5 closed set — writers use only these when capture_triggers_enabled.
+# F5 closed set - writers use only these when capture_triggers_enabled.
 # typing_pause is reserved (F3 v1 must not emit it as a section trigger).
 # url_change / scroll_coalesce are reserved for F4 / F6 seal paths.
 CAPTURE_TRIGGERS: frozenset[str] = frozenset(
@@ -50,3 +51,29 @@ def format_section_timestamp_line(timestamp: str, trigger: str | None = None) ->
 def is_timestamp_line(line: str) -> bool:
     """True for legacy or F5 timestamp lines with a closed-set trigger name."""
     return bool(RE_TIMESTAMP_LINE.match(line))
+
+
+def sanitize_markdown_inline(value: object, fallback: str = "") -> str:
+    """Return untrusted text as one normalized Markdown-safe line.
+
+    Newlines, tabs, and control characters become spaces. Repeated
+    whitespace is collapsed so window metadata cannot inject log structure.
+    """
+    text = str(value) if value is not None else ""
+    text = "".join(
+        " " if unicodedata.category(char) == "Cc" else char for char in text
+    )
+    return " ".join(text.split()) or fallback
+
+
+def format_markdown_fenced_text(value: object, language: str = "text") -> str:
+    """Wrap untrusted text in a backtick fence longer than any content run."""
+    text = str(value) if value is not None else ""
+    longest = max(
+        (len(match.group(0)) for match in re.finditer(r"`+", text)),
+        default=0,
+    )
+    fence = "`" * max(3, longest + 1)
+    safe_language = re.sub(r"[^A-Za-z0-9_-]", "", language)
+    content = text.rstrip("\r\n")
+    return f"{fence}{safe_language}\n{content}\n{fence}"

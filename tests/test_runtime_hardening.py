@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import queue
 import time
-from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -53,7 +52,7 @@ def test_aw_backoff_blocks_retry():
 
 def test_aw_http_failure_sets_backoff():
     il._window_bucket = "aw-watcher-window_x"
-    with patch("interleaved_logger.requests.get", side_effect=OSError("refused")):
+    with patch.object(il._aw_session, "get", side_effect=OSError("refused")):
         assert il.get_activitywatch_window() == ("", "")
     assert il._state.aw_backoff_until > time.monotonic()
     assert il._window_bucket is None
@@ -63,7 +62,11 @@ def test_aw_http_failure_sets_backoff():
 
 
 def test_on_press_pauses_for_secure_app_throttled():
-    with patch.object(il, "_frontmost_app_name", return_value="1Password") as front:
+    with (
+        patch.object(il, "_frontmost_app_identity", return_value=(42, "1Password")) as front,
+        patch.object(il, "sync_secure_field_from_focus", return_value=False),
+        patch.object(il, "_is_secure_app_name", wraps=il._is_secure_app_name) as classify,
+    ):
         il._state.last_secure_app_check_mono = 0.0
         key = SimpleNamespace(char="a", vk=None)
         il.on_press(key)
@@ -71,20 +74,23 @@ def test_on_press_pauses_for_secure_app_throttled():
         assert il._pause_secure_app is True
         with il._lock:
             assert il._current_keystrokes == []
-        # Throttle: second press within window does not re-query
+        # PID is checked for every key; classification is throttled for an unchanged PID.
         front.reset_mock()
+        classify.reset_mock()
         il._state.last_secure_app_check_mono = time.monotonic()
         il.on_press(key)
-        front.assert_not_called()
+        front.assert_called_once()
+        classify.assert_not_called()
 
 
 def test_on_press_reads_secure_field_cache_only_no_sync_ax():
     il._secure_field_cache = True
-    il._secure_field_cache_at = time.monotonic()  # fresh — no enqueue needed
+    il._secure_field_cache_known = True
+    il._secure_field_cache_at = time.monotonic()
     with (
         patch.object(il, "sync_secure_field_from_focus") as sync,
         patch.object(il, "refresh_secure_field_focus") as refresh,
-        patch.object(il, "_frontmost_app_name", return_value="Safari"),
+        patch.object(il, "_frontmost_app_identity", return_value=(42, "Safari")),
     ):
         il.on_press(SimpleNamespace(char="x", vk=None))
         sync.assert_not_called()
@@ -94,14 +100,18 @@ def test_on_press_reads_secure_field_cache_only_no_sync_ax():
         assert il._current_keystrokes == []
 
 
-def test_on_press_enqueues_secure_focus_when_cache_stale():
+def test_on_press_synchronously_checks_stale_secure_focus():
     il._secure_field_cache_at = 0.0
     with (
-        patch.object(il, "_frontmost_app_name", return_value="Safari"),
+        patch.object(il, "_frontmost_app_identity", return_value=(42, "Safari")),
+        patch.object(il, "sync_secure_field_from_focus", return_value=None) as sync,
         patch.object(il, "_enqueue_ax") as enq,
     ):
         il.on_press(SimpleNamespace(char="y", vk=None))
-        enq.assert_any_call(("secure_focus",))
+        sync.assert_called_once_with(force=True)
+        enq.assert_not_called()
+    with il._lock:
+        assert il._current_keystrokes == []
 
 
 # --- AX scan debounce / heading skip / children cap ---
@@ -137,36 +147,25 @@ def test_enqueue_scan_debounced():
 
 
 def test_extract_text_caps_children_per_level():
-    children = [MagicMock(name=f"c{i}") for i in range(il.AX_MAX_CHILDREN + 10)]
+    root = object()
+    children = [object() for _ in range(il.AX_MAX_CHILDREN + 10)]
+    visited: list[object] = []
 
     def copy_attr(element, attr, _):
         if attr == "AXRole":
+            if element is not root:
+                visited.append(element)
             return 0, "AXGroup"
+        if attr == "AXSubrole":
+            return 0, None
         if attr == "AXChildren":
-            return 0, children
+            return (0, children) if element is root else (0, [])
         return 1, None
 
-    calls: list = []
-
-    def fake_extract(child, depth=0):
-        calls.append(child)
-        return ""
-
-    with (
-        patch.object(il, "_element_looks_secure", return_value=False),
-        patch("interleaved_logger.AXUIElementCopyAttributeValue", side_effect=copy_attr),
-        patch.object(il, "extract_text", wraps=None),
-    ):
-        # Call real extract_text but stub recursion via patching the module function mid-call
-        # Simpler: patch list slicing indirectly by counting children iterated.
-        pass
-
-    # Direct unit: verify slice constant and loop uses [:AX_MAX_CHILDREN]
-    import inspect
-
-    src = inspect.getsource(il.extract_text)
-    assert "AX_MAX_CHILDREN" in src
-    assert "[:AX_MAX_CHILDREN]" in src or "list(children)[:AX_MAX_CHILDREN]" in src
+    with patch("interleaved_logger.AXUIElementCopyAttributeValue", side_effect=copy_attr):
+        assert il.extract_text(root) == ""
+    assert set(visited) == set(children[: il.AX_MAX_CHILDREN])
+    assert len(visited) == il.AX_MAX_CHILDREN * 2
 
 
 # --- Buffer soft caps ---

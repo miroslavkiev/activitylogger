@@ -1,10 +1,9 @@
-"""F5 capture-trigger metadata — TDD cases T-F5-01…19."""
+"""F5 capture-trigger metadata, TDD cases T-F5-01 through T-F5-19."""
 
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -48,23 +47,23 @@ def test_T_F5_03_format_helper():
 def test_T_F5_04_app_switch_seals_with_app_switch(tmp_path: Path):
     enable_features(tmp_path, capture_triggers_enabled=True)
     with il._lock:
-        il._current_heading = "AppA — WinA"
+        il._current_heading = "AppA \u2014 WinA"
         il._current_events[:] = ["typed"]
-    il.apply_heading_change("AppB — WinB")
+    il.apply_heading_change("AppB \u2014 WinB")
     with il._lock:
         assert len(il._sections) == 1
         sec = il._sections[0]
-        assert sec["heading"] == "AppA — WinA"
+        assert sec["heading"] == "AppA \u2014 WinA"
         assert sec["trigger"] == "app_switch"
         assert sec["events"] == ["typed"]
-        assert il._current_heading == "AppB — WinB"
+        assert il._current_heading == "AppB \u2014 WinB"
         assert il._current_events == []
 
 
 def test_T_F5_05_periodic_flush_seals_with_file_flush(tmp_path: Path):
     enable_features(tmp_path, capture_triggers_enabled=True)
     with il._lock:
-        il._current_heading = "App — Window"
+        il._current_heading = "App \u2014 Window"
         il._current_events[:] = ["hello"]
     il.flush_to_file()
     log = next((tmp_path / "logs").glob("daily_log_*.md"))
@@ -138,9 +137,9 @@ def test_T_F5_09_paused_clipboard_does_not_seal_secrets(tmp_path: Path):
 
 def test_T_F5_10_cleaner_accepts_legacy_timestamp():
     lines = [
-        "# Work Log — 2026-01-01\n",
+        "# Work Log \u2014 2026-01-01\n",
         "\n",
-        "## App — Window\n",
+        "## App \u2014 Window\n",
         "*12:00:00*\n",
         "\n",
         "hello\n",
@@ -155,9 +154,9 @@ def test_T_F5_10_cleaner_accepts_legacy_timestamp():
 
 def test_T_F5_11_cleaner_accepts_trigger_timestamp():
     lines = [
-        "# Work Log — 2026-01-01\n",
+        "# Work Log \u2014 2026-01-01\n",
         "\n",
-        "## App — Window\n",
+        "## App \u2014 Window\n",
         "*12:00:00 · trigger:app_switch*\n",
         "\n",
         "hello\n",
@@ -199,7 +198,7 @@ def test_T_F5_13_file_output_round_trip(tmp_path: Path):
     with il._lock:
         il._sections.append(
             {
-                "heading": "Safari — Example",
+                "heading": "Safari \u2014 Example",
                 "events": ["hello world"],
                 "timestamp": "14:02:40",
                 "trigger": "file_flush",
@@ -209,7 +208,7 @@ def test_T_F5_13_file_output_round_trip(tmp_path: Path):
     text = next((tmp_path / "logs").glob("daily_log_*.md")).read_text(
         encoding="utf-8"
     )
-    assert "## Safari — Example\n" in text
+    assert "## Safari \u2014 Example\n" in text
     assert "*14:02:40 · trigger:file_flush*" in text
     assert "hello world" in text
     assert "---" in text
@@ -265,9 +264,9 @@ def test_T_F5_15_gemini_prompt_mentions_triggers():
 def test_T_F5_16_flag_off_writes_legacy_timestamp(tmp_path: Path):
     assert il.CAPTURE_TRIGGERS_ENABLED is False
     with il._lock:
-        il._current_heading = "App — Window"
+        il._current_heading = "App \u2014 Window"
         il._current_events[:] = ["typed"]
-    il.apply_heading_change("Other — Win")
+    il.apply_heading_change("Other \u2014 Win")
     il.flush_to_file()
     text = next((tmp_path / "logs").glob("daily_log_*.md")).read_text(
         encoding="utf-8"
@@ -304,8 +303,8 @@ def test_T_F5_18_flag_off_does_not_seal_on_clipboard(tmp_path: Path):
 def test_T_F5_19_no_migration_rewrite(tmp_path: Path):
     fixture = tmp_path / "legacy_daily_log.md"
     fixture.write_text(
-        "# Work Log — 2026-01-01\n\n"
-        "## App — Window\n"
+        "# Work Log \u2014 2026-01-01\n\n"
+        "## App \u2014 Window\n"
         "*09:00:00*\n\n"
         "legacy body\n\n"
         "---\n",

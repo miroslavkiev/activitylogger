@@ -1,239 +1,81 @@
-# ActivityLogger — master spec index
-
-**Status:** aggregate — CONSISTENT_ACCEPT (2026-08-15 R3)  
-**Authority:** [`00-SCOPE.md`](00-SCOPE.md) for product bounds; [`F2-config.md`](F2-config.md) for config names; this file for cross-feature contract.
-
-Do not expand scope beyond [`00-SCOPE.md`](00-SCOPE.md).
-
----
-
-## 1. Product summary
-
-Personal macOS input transcript → daily Markdown → cleaner → Gemini automation analysis.
-
-Production capture uses certificate-signed `dist/ActivityLoggerNative.app` via Launch Agent `start_logger.sh` → `open -W`.
-
-Markdown is the only user-facing log artifact. No JPEG, audio, OCR, or Screen Recording pipeline.
+# ActivityLogger master specification
 
----
+**Status:** implemented, source-verified, and live-deployment verified on 2026-08-21.
 
-## 2. Spec map
+This document is the cross-feature contract. [`00-SCOPE.md`](00-SCOPE.md) owns product bounds, [`F2-config.md`](F2-config.md) owns config keys, and [`docs/MACOS_TCC.md`](../MACOS_TCC.md) owns production operations.
 
-| Doc | Role |
-|-----|------|
-| [`00-SCOPE.md`](00-SCOPE.md) | Locked product decisions and ignore list |
-| [`F0-constraints-and-non-goals.md`](F0-constraints-and-non-goals.md) | KEEP / AVOID regression gates |
-| [`F1-window-titles.md`](F1-window-titles.md) | Native-first titles; AW optional enricher |
-| [`F2-config.md`](F2-config.md) | **Canonical** TOML schema and load rules |
-| [`F3-flush-model.md`](F3-flush-model.md) | Typing-pause keys→events; durable file flush |
-| [`F4-browser-url.md`](F4-browser-url.md) | Opt-in browser URL event lines |
-| [`F5-capture-triggers.md`](F5-capture-triggers.md) | Opt-in section trigger metadata + seal paths |
-| [`F6-scroll-coalescing.md`](F6-scroll-coalescing.md) | Opt-in scroll burst coalesce + seal |
-| [`STATUS.md`](STATUS.md) | Review status board |
+## Product contract
 
----
+ActivityLogger is one macOS process that records a private, human-readable activity transcript into daily Markdown. It captures active app and window context, character-level keys and hotkeys, clicks enriched through Accessibility, changed Accessibility text, and clipboard changes. Browser URLs, trigger annotations, and scroll capture are optional.
 
-## 3. Locked decisions (cross-spec)
+There is no screenshot, Screen Recording, OCR, audio, video, JSONL, SQLite, network service, or automatic retention service.
 
-| Topic | Decision |
-|-------|----------|
-| Config authority | F2 owns all key names and defaults. Sibling specs must match F2 §6. |
-| ActivityWatch keys | `window_titles.activitywatch_enricher`, `window_titles.activitywatch_base_url` |
-| Typing idle key | `timing.typing_pause_sec` default **0.5** (not ms) |
-| File flush key | `timing.flush_interval_sec` only (no `file_flush_sec`) |
-| Browser URL key | `features.browser_url_capture` default **false** |
-| Capture triggers key | `features.capture_triggers_enabled` default **false** (opt-in) |
-| Scroll coalesce | `features.scroll_coalesce_enabled` default **false**; `scroll_coalesce_ms` default **400** |
-| F3 typing-pause | Keys → `_current_events` only. **No** section seal. **No** Markdown write. |
-| F5 `typing_pause` | **Reserved** in closed set. Not emitted until a future seal-on-burst decision. |
-| F4 URL | Event line only when F5 OFF. When F4 ON and F5 ON: F4 seals after URL emit with `url_change`. |
-| F5 Markdown syntax | Sole normative: `*{HH:MM:SS} · trigger:{name}*` |
-| Log artifact | Daily Markdown only |
-| Media / OCR / Screen Recording | Banned (F0) |
+## Runtime and build
 
-Privacy-safer defaults: URL, triggers, and scroll are all opt-in (`false`).
+- Production is `dist/ActivityLoggerNative.app` through `start_logger.sh` -> `open -W`.
+- Build and test use exact Python 3.11.9 from `.python-version` in `.venv`.
+- Dependencies install from the hashed `requirements.txt` lock.
+- The canonical build creates a staged PyInstaller onedir app and signs nested code plus the outer bundle with the pinned local identity and sole Apple Events entitlement. Hardened Runtime is intentionally not enabled for the retained self-signed no-Team-ID leaf. Verification enforces exact nested and outer signatures, leaf and designated requirement, identifier, entitlement allowlist, symlink containment, and Mach-O load-path containment.
+- The build validates the installed plist, boots out and quiesces the Launch Agent before promotion, atomically promotes, bootstraps, and requires a fresh stable exact-path native PID. Failed proof restores the unchanged prevalidated bundle and proves a fresh previous-app PID.
+- Normal builds use a pre-provisioned dedicated keychain and pinned leaf fingerprint. They never create or rotate an identity.
 
----
+## Privacy contract
 
-## 4. Canonical config snippet
+Password-manager matching and Accessibility secure-field detection pause every capture channel. An unknown result is unsafe and fails closed. Key handling performs a synchronous secure-app and secure-field decision before appending. Asynchronous work carries privacy and context generations and is discarded if state changes.
 
-Primary path: `~/.config/activitylogger/config.toml` (see F2 for discovery order).
+On a pause edge, in-flight keys, modifiers, scroll state, click reservations, and capture context that could cross the boundary are discarded. Clipboard change counts advance during a pause so paused content cannot appear later.
 
-```toml
-# ActivityLogger capture config (F2) — defaults
+## Capture and persistence contract
 
-[paths]
-log_dir = "~/scripts/activitylogger/logs"
+- Keys remain character-level. Typing idle joins the key buffer into the current event list but does not seal a section or write a file.
+- Window changes flush keys and scroll state under the previous context before moving to the new heading.
+- Clicks reserve ordered section position synchronously. Accessibility enrichment fills that reservation only when privacy generation and click context still match. Failed or expired reservations are discarded.
+- Clipboard reads use change counts plus digests, retain no unnecessary plaintext state, and retry initialization with bounded backoff.
+- Accessibility scans have depth, child, character, global-node, time, queue, and debounce bounds. Unknown or stale results are discarded.
+- File, typing, and scroll timers wait on stateful deadlines rather than fixed polling.
+- File flush is serialized. It detaches resolved sections, groups them by capture date, writes each group durably, and restores only uncommitted groups after failure. Buffer caps bound retry memory.
+- SIGTERM and SIGINT request coordinated shutdown. Listeners and workers stop, a final flush runs, and fatal worker or persistence failure returns a nonzero status.
 
-[timing]
-window_check_sec = 5
-flush_interval_sec = 30
-typing_pause_sec = 0.5
-secure_field_cache_sec = 0.35
-diag_min_interval_sec = 30.0
-secure_app_check_sec = 0.15
+## Optional features
 
-[privacy]
-secure_apps = [
-  "1password",
-  "bitwarden",
-  "keychain",
-  "keepass",
-  "lastpass",
-  "passwords",
-]
+| Feature | Default | Current behavior |
+|---|---:|---|
+| ActivityWatch enrichment | on | Native fields win. Only loopback endpoints are allowed unless unsafe remote access is explicitly enabled. Source failures use backoff. |
+| Browser URL capture | off | Accessibility first, Apple Events fallback. Safe mode strips user information and fragment and neutralizes every query name and value. |
+| Capture trigger annotations | off | When enabled, sealed sections receive one closed-set trigger token. |
+| Scroll coalescing | off | One bounded burst becomes one event after the exact quiet deadline. It seals a section even when annotations are off. |
 
-[ax]
-ax_queue_maxsize = 16
-ax_max_depth = 7
-screen_compare_max_chars = 4000
-ax_max_children = 40
-ax_scan_debounce_sec = 3.0
+Unsafe full-URL mode and remote ActivityWatch access emit startup warnings. Browser URL capture never requires Screen Recording.
 
-[window_titles]
-activitywatch_enricher = true
-activitywatch_base_url = "http://localhost:5600"
-aw_backoff_sec = 45.0
+## Config and resource limits
 
-[buffers]
-max_keystrokes = 2000
-max_events = 500
-max_sections = 200
+Config loads once from the deterministic discovery order in [`F2-config.md`](F2-config.md). It is trusted operator input only after checks for path, file type, ownership, links, and permissions. Malformed or out-of-range known values are fatal; unknown keys warn and are ignored. All numeric values are finite and bounded.
 
-[features]
-browser_url_capture = false
-capture_triggers_enabled = false
-scroll_coalesce_enabled = false
-scroll_coalesce_ms = 400
-```
+## Data handling
 
-**Rejected aliases (do not ship):** `aw_enabled`, `aw_base_url`, `[activitywatch]`, `browser_url_enabled`, `typing_pause_ms`, `file_flush_sec`.
+Runtime sets umask `077`. Config directories, log directories, daily files, diagnostics, lock files, and compacted results use private ownership and modes. Logs remain plaintext and are retained indefinitely until the operator archives or deletes them. There is no automatic deletion.
 
----
+The Markdown compactor restructures plaintext and does not redact. Sections at or below 1 MiB and 10,000 lines receive full transformations. Oversized sections pass through unchanged after a diagnostic, using a spooled temporary file for bounded memory and never silently dropping content. Review and redact output before any external LLM use.
 
-## 5. Canonical Markdown grammar
+## Validation gate
 
-### 5.1 Section shape (always)
+Source hardening and signed-bundle deployment completed after the original three QA loops plus the final lifecycle and Launch Agent acceptance loops. The final gate is:
 
-```markdown
-## {app} — {title}
-*{timestamp line}*
+- all 335 source tests passed; the strict deployed codesign test passed separately after the final rebuild
+- dependency consistency, lint, strict audit, shell syntax, and plist validation passed
+- CI pinned to `macos-15`, with staged signing and tamper-rejection coverage
 
-{event lines…}
+The dedicated keychain import, pinned-leaf continuity, staged non-Hardened construction, strict deployed verification, bootout/bootstrap lifecycle, exact native-process proof, and real typing smoke passed. The installed mode `600` plist enforces `KeepAlive=true`, `RunAtLoad=true`, and `Umask=63`. The legacy PKCS#12 and any redundant login-keychain identity remain private mode `600` pending explicit operator disposition; they do not block runtime.
 
----
-```
+## Specification map
 
-- Em dash in heading: ` — ` (U+2014).
-- Empty native title → `Unknown window` at heading build (F1).
-- No URL / trigger / other metadata inside the `##` line.
-
-### 5.2 Timestamp line
-
-| Mode | Line |
-|------|------|
-| Legacy / F5 flag OFF | `*{HH:MM:SS}*` |
-| F5 flag ON | `*{HH:MM:SS} · trigger:{name}*` |
-
-Separator: space, middle dot `·` (U+00B7), space. No space after `trigger:`.
-
-### 5.3 Stable event tokens
-
-| Kind | Form | Spec |
-|------|------|------|
-| Browser URL | `> [URL]: {absolute_url}` | F4 |
-| Scroll burst | `🖱️ **Scroll:** {n} ticks, net {dir}` (optional app) | F6 |
-| Keystrokes / hotkeys / clicks / clipboard | Existing logger forms | F0 K2 + core |
-
----
-
-## 6. Closed trigger enum (F5)
-
-Writers use **only** these names when `capture_triggers_enabled` is true:
-
-| Name | Status | Owner |
-|------|--------|--------|
-| `app_switch` | Active | Core + F5 |
-| `click` | Active (flag ON seals) | F5 |
-| `clipboard` | Active (flag ON seals) | F5 |
-| `file_flush` | Active | Core + F5 |
-| `url_change` | Active when F4 ON + F5 ON | F4 |
-| `scroll_coalesce` | Active when F6 seals | F6 |
-| `typing_pause` | **Reserved — unused in F3 v1** | F3 (future) |
-
-No aliases (`idle`, `scroll`, `window_change`, …).
-
----
-
-## 7. Ordered TDD implementation sequence
-
-Run F0 guards first. Then features in this order so contracts stay green.
-
-| Order | Focus | Why first | Primary tests |
-|-------|-------|-----------|---------------|
-| 0 | F0 constraint suite | Blocks media / TCC / privacy regressions | `tests/test_privacy_and_cleaner.py`, `tests/test_f0_constraints.py` |
-| 1 | F2 config load | All later features read these keys | `tests/test_config.py` (TC-F2-*) |
-| 2 | F1 native titles | Headings + secure-app inputs | `tests/test_window_titles.py` |
-| 3 | F3 typing-pause flush | Keys→events; no seal | T-F3-* |
-| 4 | F5 triggers (flag OFF then ON) | Markdown grammar + seal causes | `tests/test_capture_triggers.py` |
-| 5 | F4 browser URL | Event lines; F5 ON → seal `url_change` | `tests/test_browser_url.py` |
-| 6 | F6 scroll coalesce | Opt-in; seal + `scroll_coalesce` | T-F6-* |
-
-**Rule:** write failing tests for the next row before production code. After logger binary changes: `./scripts/rebuild_and_restart.sh`; confirm `certificate leaf`; smoke-check `logs/daily_log_*.md` growth.
-
-Suggested dependency for implementers:
-
-1. F2 → F1 (titles need enricher keys)
-2. F2 → F3 (intervals)
-3. F2 + F3 → F5 (triggers / seals; F3 does not emit `typing_pause`)
-4. F2 + F1 + F5 → F4 (`url_change` seal when both F4 and F5 flags ON)
-5. F2 + F5 → F6 (`scroll_coalesce`)
-
----
-
-## 8. Coordination quick reference
-
-| Interaction | Rule |
-|-------------|------|
-| F3 × F5 | Typing pause never seals in F3 v1; later seal uses `file_flush` / `click` / `app_switch` / … |
-| F4 × F5 | F5 OFF: `> [URL]:` only. Both ON: F4 seals with `url_change` |
-| F6 × F5 | Coalesce flush seals like click; trigger `scroll_coalesce` when F5 flag ON |
-| F1 × F4 | Heading from F1; URL never in `##` line |
-| All × F0 | Each Fx has an **F0 impact** section; F0 suite stays green |
-
----
-
-## Aggregate critic revision log
-
-**2026-08-15 — aggregate consistency pass**
-
-| Tension | Resolution |
-|---------|------------|
-| F2 vs F5 enable flag | Restored `features.capture_triggers_enabled = false` in F2 (privacy-safer opt-in for new seal cadence). F5 already matched. |
-| F2 vs F3 idle key | Locked `timing.typing_pause_sec = 0.5`. Updated F3 off `typing_pause_ms` / 800. |
-| F2 vs F6 scroll ms | Locked `scroll_coalesce_ms = 400`. Updated F6. |
-| F2 vs F4 URL key | Locked `features.browser_url_capture`. Updated F4 off `browser_url_enabled`. |
-| F1 vs F2 AW keys | Locked `[window_titles] activitywatch_*`. Updated F1 off `[activitywatch]` / `aw_*`. |
-| F3 vs F5 typing_pause | F3 = keys→events only. F5 keeps `typing_pause` **reserved / unused**. |
-| F5 vs F6 Markdown | F5 §6 remains sole trigger syntax; F6 examples already one italic line. |
-| F0 impact missing | Added F0 impact sections to F2–F6 (F1 already had one). |
-
-**Verdict (prior pass): CONSISTENT_ACCEPT** — later independent verifier found remaining issues (below).
-
-**2026-08-15 — independent aggregate verifier**
-
-| Tension | Resolution |
-|---------|------------|
-| F4 × F5 × MASTER `url_change` seal owner | Locked: F5 OFF → event only; F4 ON + F5 ON → **F4 seals** after URL emit with `url_change`. Removed F4 “F5 owns seal”, F5 “optional per F4”, and MASTER “only if F5 seals”. |
-| F5 Markdown cross-refs | Goal / Flag ON cited §5 for syntax; normative grammar is §6. Fixed to §6. |
-| F1 placeholder cross-ref | Resolver text cited §8; heading build is §6.2. Fixed. |
-
-**Verdict: NEEDS_ANOTHER_ROUND** (fixes applied in place; re-verify seal wording + § refs).
-
-No remaining intentional product blockers under the locked R1 config claims; the round is for the seal-ownership lock above.
-
-**2026-08-15 — R3 independent aggregate verifier**
-
-Re-checked F4 / F5 / MASTER `url_change` seal ownership, F5 §6 syntax-only refs, F1 §6.2 placeholder cross-ref, and the config-alias / F3 no-seal sweep. No further fixes.
-
-**Verdict: CONSISTENT_ACCEPT**
+| Document | Authority |
+|---|---|
+| [`F0-constraints-and-non-goals.md`](F0-constraints-and-non-goals.md) | Safety constraints and exclusions |
+| [`F1-window-titles.md`](F1-window-titles.md) | Native and ActivityWatch resolution |
+| [`F2-config.md`](F2-config.md) | Schema, discovery, trust, and bounds |
+| [`F3-flush-model.md`](F3-flush-model.md) | Buffers, timers, lifecycle, and durability |
+| [`F4-browser-url.md`](F4-browser-url.md) | URL sources and privacy normalization |
+| [`F5-capture-triggers.md`](F5-capture-triggers.md) | Section triggers and click ordering |
+| [`F6-scroll-coalescing.md`](F6-scroll-coalescing.md) | Scroll burst lifecycle |
+| [`STATUS.md`](STATUS.md) | Current acceptance status |

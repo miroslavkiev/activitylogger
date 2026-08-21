@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""
-Markdown activity-log cleaner.
+"""Markdown activity-log compactor.
 
 Goal: shrink auto-generated daily Markdown logs while preserving timeline context.
+
+This tool does not redact secrets. Its output remains sensitive plaintext.
 
 Main features:
   - compress consecutive duplicate UI/event lines (ignoring blank lines)
   - truncate oversized fenced code blocks (head/tail + marker)
   - compress repeated identical lines inside code blocks
   - truncate very long plaintext lines (head/tail + marker)
-  - compress long consecutive runs of patterned “spam” lines (regex-based)
+  - compress long consecutive runs of patterned spam lines (regex-based)
   - remove known-irrelevant noisy lines (regex-based) with a per-section summary
 
 Only standard library.
@@ -21,11 +22,12 @@ import argparse
 import os
 import re
 import sys
+import tempfile
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Tuple
+from pathlib import Path
+from typing import IO, Callable, Iterable, Iterator, List, Optional, Tuple
 
 from markdown_format import (
-    RE_TIMESTAMP_LINE,
     URL_EVENT_PREFIX,
     is_timestamp_line,
 )
@@ -69,9 +71,26 @@ TRACEBACK_TRUNC_TEMPLATE = "... [Truncated {removed} traceback/error lines to sa
 
 RE_SECTION_HEADER = re.compile(r"^##\s+.+\S.*$")
 
-# Fences: open is any ```..., close must be bare ```
-RE_FENCE_OPEN = re.compile(r"^```.*$")
-RE_FENCE_CLOSE = re.compile(r"^```[\t ]*$")
+# CommonMark-style backtick and tilde fences. Generated capture uses backticks,
+# but accepting both here keeps compaction from changing ordinary Markdown.
+RE_FENCE_OPEN = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})(.*)$")
+
+PLAINTEXT_WARNING = (
+    "WARNING: Compaction does not redact secrets. "
+    "The output remains sensitive plaintext."
+)
+
+# Full compaction keeps several transformed lists alive at once. Spool every
+# section, then use that richer path only below both limits. Larger sections
+# are copied unchanged so memory stays bounded and no captured content vanishes.
+SECTION_FULL_MODE_MAX_BYTES = 1 * 1024 * 1024
+SECTION_FULL_MODE_MAX_LINES = 10_000
+SECTION_SPOOL_MEMORY_BYTES = 256 * 1024
+LARGE_SECTION_WARNING = (
+    "WARNING: Section {index} body is {bytes} bytes across {lines} lines; "
+    "streaming it unchanged through bounded safe mode. "
+    "Noise, repeat, traceback, and line-truncation transforms were skipped."
+)
 
 # Shared noise rows reused by section filter + fenced-block filter
 _SHARED_NOISE: List[Tuple[str, str]] = [
@@ -120,12 +139,32 @@ def is_separator_line(line: str) -> bool:
     return line.strip() == "---"
 
 
+FenceSpec = tuple[str, int]
+
+
+def fence_open_spec(line: str) -> FenceSpec | None:
+    """Return the marker and length for a valid opening fence."""
+    match = RE_FENCE_OPEN.match(line.rstrip("\r\n"))
+    if not match:
+        return None
+    marker, info = match.groups()
+    if marker[0] == "`" and "`" in info:
+        return None
+    return marker[0], len(marker)
+
+
 def is_fence_open(line: str) -> bool:
-    return bool(RE_FENCE_OPEN.match(line.rstrip("\n")))
+    return fence_open_spec(line) is not None
 
 
-def is_fence_close(line: str) -> bool:
-    return bool(RE_FENCE_CLOSE.match(line.rstrip("\n")))
+def is_fence_close(line: str, opener: FenceSpec | None = None) -> bool:
+    """Return true for a bare closing fence compatible with ``opener``."""
+    core = line.rstrip("\r\n")
+    match = re.fullmatch(r"[ \t]{0,3}(`{3,}|~{3,})[ \t]*", core)
+    if not match:
+        return False
+    marker = match.group(1)
+    return opener is None or (marker[0] == opener[0] and len(marker) >= opener[1])
 
 
 def is_event_candidate_line(line: str) -> bool:
@@ -190,7 +229,7 @@ def compress_repeated_lines_in_code_block(lines: List[str]) -> List[str]:
             return
         if run > INTRA_BLOCK_REPEAT_THRESHOLD:
             out.append(prev)
-            out.append(INTRA_BLOCK_REPEAT_TEMPLATE.format(count=run) + "\n")
+            out.append(INTRA_BLOCK_REPEAT_TEMPLATE.format(count=run - 1) + "\n")
         else:
             out.extend([prev] * run)
         prev = None
@@ -224,12 +263,14 @@ def process_fenced_code_blocks(lines: List[str]) -> List[str]:
     out: List[str] = []
     in_block = False
     fence_line: Optional[str] = None
+    fence_spec: FenceSpec | None = None
     block_lines: List[str] = []
 
     compiled_noise = [(label, re.compile(pat)) for (label, pat) in CODEBLOCK_NOISE_PATTERNS]
 
     def filter_noise_in_block(content: List[str], fence: str) -> List[str]:
-        lang = fence[3:].strip().lower()
+        match = RE_FENCE_OPEN.match(fence)
+        lang = match.group(2).strip().lower() if match else ""
         if lang and lang not in ("text", "log", "txt"):
             return content
         removed: dict[str, int] = {}
@@ -253,17 +294,19 @@ def process_fenced_code_blocks(lines: List[str]) -> List[str]:
         ln = line if line.endswith("\n") else line + "\n"
 
         if not in_block:
-            if is_fence_open(ln):
+            opener = fence_open_spec(ln)
+            if opener is not None:
                 in_block = True
                 fence_line = ln.rstrip("\n")
+                fence_spec = opener
                 block_lines = []
             else:
                 out.append(ln)
             continue
 
         # inside block
-        if is_fence_close(ln):
-            assert fence_line is not None
+        if is_fence_close(ln, fence_spec):
+            assert fence_line is not None and fence_spec is not None
             processed = [truncate_long_line(x, MAX_PLAINTEXT_LINE_CHARS, PLAINTEXT_LINE_TRUNC_TEMPLATE) for x in block_lines]
             processed = filter_noise_in_block(processed, fence_line)
             processed = compress_repeated_lines_in_code_block(processed)
@@ -275,12 +318,13 @@ def process_fenced_code_blocks(lines: List[str]) -> List[str]:
 
             in_block = False
             fence_line = None
+            fence_spec = None
             block_lines = []
         else:
             block_lines.append(ln)
 
     # Unclosed block: still noise-filter / truncate / compress like closed blocks
-    if in_block and fence_line is not None:
+    if in_block and fence_line is not None and fence_spec is not None:
         processed = [truncate_long_line(x, MAX_PLAINTEXT_LINE_CHARS, PLAINTEXT_LINE_TRUNC_TEMPLATE) for x in block_lines]
         processed = filter_noise_in_block(processed, fence_line)
         processed = compress_repeated_lines_in_code_block(processed)
@@ -299,6 +343,7 @@ def compress_spam_runs(lines: List[str]) -> List[str]:
     out: List[str] = []
     run_label: Optional[str] = None
     run_lines: List[str] = []
+    fence_spec: FenceSpec | None = None
 
     def match_label(s: str) -> Optional[str]:
         for label, pat in compiled:
@@ -330,9 +375,18 @@ def compress_spam_runs(lines: List[str]) -> List[str]:
 
     for line in lines:
         ln = line if line.endswith("\n") else line + "\n"
-        if is_fence_open(ln):
+        if fence_spec is not None:
             flush()
             out.append(ln)
+            if is_fence_close(ln, fence_spec):
+                fence_spec = None
+            continue
+
+        opener = fence_open_spec(ln)
+        if opener is not None:
+            flush()
+            out.append(ln)
+            fence_spec = opener
             continue
 
         label = match_label(ln.rstrip("\n"))
@@ -361,11 +415,18 @@ def compress_traceback_blocks(lines: List[str]) -> List[str]:
     This is a big lever for days where terminal output dominates but isn’t fenced.
     """
     out: List[str] = []
-    in_fence = False
+    fence_spec: FenceSpec | None = None
 
     tb_start = re.compile(r"^\s*Traceback \(most recent call last\):\s*$")
-    # A permissive set of “traceback-ish” lines; we stop when content clearly returns to normal log flow.
-    # Continuations only — do not use ultra-broad path/Error matchers that swallow real log lines.
+    tb_chain = re.compile(
+        r"^\s*(During handling of the above exception|"
+        r"The above exception was the direct cause).*"
+    )
+    tb_terminal = re.compile(
+        r"^\s*[A-Za-z_][\w.]*(?:Error|Exception):.*$"
+    )
+    # A permissive set of traceback-like lines. Stop when normal log flow resumes.
+    # Continuations only. Broad path/error matchers can swallow real log lines.
     tb_line = re.compile(
         r"^\s*("
         r"File\s+\".+?\"(, line \d+.*)?|"
@@ -384,15 +445,16 @@ def compress_traceback_blocks(lines: List[str]) -> List[str]:
     while i < len(lines):
         ln = lines[i] if lines[i].endswith("\n") else lines[i] + "\n"
 
-        if is_fence_open(ln):
+        if fence_spec is not None:
             out.append(ln)
-            in_fence = True
+            if is_fence_close(ln, fence_spec):
+                fence_spec = None
             i += 1
             continue
-        if in_fence:
+        opener = fence_open_spec(ln)
+        if opener is not None:
             out.append(ln)
-            if is_fence_close(ln):
-                in_fence = False
+            fence_spec = opener
             i += 1
             continue
 
@@ -404,14 +466,45 @@ def compress_traceback_blocks(lines: List[str]) -> List[str]:
         # Gather traceback block
         block: List[str] = [ln]
         i += 1
+        terminal_seen = False
         while i < len(lines):
             nxt = lines[i] if lines[i].endswith("\n") else lines[i] + "\n"
-            if is_fence_open(nxt) or is_section_header(nxt) or is_timestamp_line(nxt) or is_separator_line(nxt):
+            if (
+                fence_open_spec(nxt) is not None
+                or is_section_header(nxt)
+                or is_timestamp_line(nxt)
+                or is_separator_line(nxt)
+            ):
                 break
             core = nxt.rstrip("\n")
-            if tb_line.match(core) or is_blank(nxt):
+
+            if terminal_seen:
+                if is_blank(nxt):
+                    following = i + 1
+                    while following < len(lines) and is_blank(lines[following]):
+                        following += 1
+                    if following >= len(lines):
+                        break
+                    following_core = lines[following].rstrip("\r\n")
+                    if not (
+                        tb_chain.match(following_core)
+                        or tb_start.match(following_core)
+                    ):
+                        break
+                elif not (tb_chain.match(core) or tb_start.match(core)):
+                    break
+                terminal_seen = False
+
+            if (
+                tb_start.match(core)
+                or tb_line.match(core)
+                or is_blank(nxt)
+                or (core[:1].isspace() and bool(core.strip()))
+            ):
                 block.append(nxt)
                 i += 1
+                if tb_terminal.match(core):
+                    terminal_seen = True
                 continue
             break
 
@@ -443,19 +536,20 @@ def filter_noise_lines_for_section(lines: List[str]) -> Tuple[List[str], dict[st
 
     out: List[str] = []
     removed: dict[str, int] = {}
-    in_block = False
+    fence_spec: FenceSpec | None = None
 
     for line in lines:
         ln = line if line.endswith("\n") else line + "\n"
 
-        if is_fence_open(ln):
+        if fence_spec is not None:
             out.append(ln)
-            in_block = True
+            if is_fence_close(ln, fence_spec):
+                fence_spec = None
             continue
-        if in_block:
+        opener = fence_open_spec(ln)
+        if opener is not None:
             out.append(ln)
-            if is_fence_close(ln):
-                in_block = False
+            fence_spec = opener
             continue
 
         if is_blank(ln) or is_separator_line(ln):
@@ -482,6 +576,7 @@ def dedupe_consecutive_event_lines(lines: List[str]) -> List[str]:
     pending_line: Optional[str] = None
     pending_count = 0
     pending_blanks: List[str] = []
+    fence_spec: FenceSpec | None = None
 
     def flush() -> None:
         nonlocal pending_line, pending_count, pending_blanks
@@ -498,6 +593,21 @@ def dedupe_consecutive_event_lines(lines: List[str]) -> List[str]:
 
     for line in lines:
         ln = line if line.endswith("\n") else line + "\n"
+
+        if fence_spec is not None:
+            flush()
+            out.append(ln)
+            if is_fence_close(ln, fence_spec):
+                fence_spec = None
+            continue
+
+        opener = fence_open_spec(ln)
+        if opener is not None:
+            flush()
+            out.append(ln)
+            fence_spec = opener
+            continue
+
         ln = truncate_plaintext_line(ln)
 
         if is_blank(ln):
@@ -533,38 +643,139 @@ class Section:
     body: List[str]
 
 
+@dataclass
+class _SpooledSection:
+    header: str
+    timestamp: str
+    body: IO[str]
+    byte_count: int = 0
+    line_count: int = 0
+    meaningful: bool = False
+
+    def append(self, line: str) -> None:
+        self.body.write(line)
+        self.byte_count = self.body.tell()
+        self.line_count += 1
+        if not is_blank(line) and not is_separator_line(line):
+            self.meaningful = True
+
+    @property
+    def use_safe_mode(self) -> bool:
+        return (
+            self.byte_count > SECTION_FULL_MODE_MAX_BYTES
+            or self.line_count > SECTION_FULL_MODE_MAX_LINES
+        )
+
+
+def _with_newline(line: str) -> str:
+    return line if line.endswith("\n") else line + "\n"
+
+
+def _new_spooled_section(header: str, timestamp: str) -> _SpooledSection:
+    body = tempfile.SpooledTemporaryFile(
+        max_size=SECTION_SPOOL_MEMORY_BYTES,
+        mode="w+t",
+        encoding="utf-8",
+        newline="",
+    )
+    return _SpooledSection(header=header, timestamp=timestamp, body=body)
+
+
+def _iter_spooled_log_parts(
+    lines: Iterable[str],
+) -> Iterator[tuple[str, str | _SpooledSection]]:
+    """Yield preamble lines and sections backed by a bounded memory spool."""
+    stream = iter(lines)
+    pending: str | None = None
+    current: _SpooledSection | None = None
+    fence_spec: FenceSpec | None = None
+
+    try:
+        while True:
+            try:
+                raw = pending if pending is not None else next(stream)
+            except StopIteration:
+                break
+            pending = None
+            line = _with_newline(raw)
+
+            if fence_spec is not None:
+                if current is None:
+                    yield "preamble", line
+                else:
+                    current.append(line)
+                if is_fence_close(line, fence_spec):
+                    fence_spec = None
+                continue
+
+            opener = fence_open_spec(line)
+            if opener is not None:
+                if current is None:
+                    yield "preamble", line
+                else:
+                    current.append(line)
+                fence_spec = opener
+                continue
+
+            if is_section_header(line):
+                candidate = next(stream, None)
+                if candidate is not None and is_timestamp_line(candidate):
+                    if current is not None:
+                        ready = current
+                        current = None
+                        try:
+                            yield "section", ready
+                        finally:
+                            ready.body.close()
+                    current = _new_spooled_section(line, _with_newline(candidate))
+                    continue
+                if current is None:
+                    yield "preamble", line
+                else:
+                    current.append(line)
+                pending = candidate
+                continue
+
+            if current is None:
+                yield "preamble", line
+            else:
+                current.append(line)
+
+        if current is not None:
+            ready = current
+            current = None
+            try:
+                yield "section", ready
+            finally:
+                ready.body.close()
+    finally:
+        if current is not None:
+            current.body.close()
+
+
+def iter_log_parts(lines: Iterable[str]) -> Iterator[tuple[str, str | Section]]:
+    """Compatibility iterator that materializes each spooled section body."""
+    for kind, value in _iter_spooled_log_parts(lines):
+        if kind == "preamble":
+            assert isinstance(value, str)
+            yield kind, value
+            continue
+        assert isinstance(value, _SpooledSection)
+        value.body.seek(0)
+        yield kind, Section(value.header, value.timestamp, value.body.readlines())
+
+
 def split_into_preamble_and_sections(lines: List[str]) -> Tuple[List[str], List[Section]]:
+    """Compatibility list API backed by the fence-aware streaming parser."""
     preamble: List[str] = []
     sections: List[Section] = []
-
-    i = 0
-    n = len(lines)
-
-    while i < n and not is_section_header(lines[i]):
-        preamble.append(lines[i] if lines[i].endswith("\n") else lines[i] + "\n")
-        i += 1
-
-    while i < n:
-        if not is_section_header(lines[i]):
-            preamble.append(lines[i] if lines[i].endswith("\n") else lines[i] + "\n")
-            i += 1
-            continue
-
-        header = lines[i] if lines[i].endswith("\n") else lines[i] + "\n"
-        i += 1
-
-        timestamp = ""
-        if i < n and is_timestamp_line(lines[i]):
-            timestamp = lines[i] if lines[i].endswith("\n") else lines[i] + "\n"
-            i += 1
-
-        body: List[str] = []
-        while i < n and not is_section_header(lines[i]):
-            body.append(lines[i] if lines[i].endswith("\n") else lines[i] + "\n")
-            i += 1
-
-        sections.append(Section(header=header, timestamp=timestamp, body=body))
-
+    for kind, value in iter_log_parts(lines):
+        if kind == "preamble":
+            assert isinstance(value, str)
+            preamble.append(value)
+        else:
+            assert isinstance(value, Section)
+            sections.append(value)
     return preamble, sections
 
 
@@ -589,7 +800,15 @@ def sanitize_section_body(body_lines: List[str]) -> List[str]:
     return after_ui
 
 
+def compacted_output_path(input_path: str) -> str:
+    base, ext = os.path.splitext(input_path)
+    if not ext:
+        ext = ".md"
+    return f"{base}_compacted{ext}"
+
+
 def cleaned_output_path(input_path: str) -> str:
+    """Return the legacy output name for import compatibility."""
     base, ext = os.path.splitext(input_path)
     if not ext:
         ext = ".md"
@@ -602,15 +821,87 @@ def read_text_file(path: str) -> List[str]:
 
 
 def write_text_file(path: str, lines: Iterable[str]) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        for ln in lines:
-            f.write(ln)
+    """Atomically replace ``path`` with mode 0600 after a complete write."""
+    destination = Path(path)
+    fd, temporary = tempfile.mkstemp(
+        dir=destination.parent,
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+    )
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            fd = -1
+            for line in lines:
+                output.write(line)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, destination)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def iter_compacted_lines(
+    lines: Iterable[str],
+    *,
+    warn: Callable[[str], None] | None = None,
+) -> Iterator[str]:
+    """Compact a stream with full semantics below the section safety limits."""
+    warn_fn = warn if warn is not None else lambda message: print(message, file=sys.stderr)
+    section_index = 0
+    for kind, value in _iter_spooled_log_parts(lines):
+        if kind == "preamble":
+            assert isinstance(value, str)
+            yield value
+            continue
+        assert isinstance(value, _SpooledSection)
+        section_index += 1
+        value.body.seek(0)
+        if value.use_safe_mode:
+            warn_fn(
+                LARGE_SECTION_WARNING.format(
+                    index=section_index,
+                    bytes=value.byte_count,
+                    lines=value.line_count,
+                )
+            )
+            if not value.meaningful:
+                continue
+            yield value.header
+            yield value.timestamp
+            yield from value.body
+            continue
+
+        compacted_body = sanitize_section_body(value.body.readlines())
+        if not section_has_meaningful_content(compacted_body):
+            continue
+        yield value.header
+        yield value.timestamp
+        yield from compacted_body
+
+
+def compact_file(input_path: str, output_path: str | None = None) -> str:
+    """Compact one Markdown log into an atomic, private plaintext output."""
+    destination = output_path or compacted_output_path(input_path)
+    with open(input_path, "r", encoding="utf-8", errors="replace") as source:
+        write_text_file(destination, iter_compacted_lines(source))
+    return destination
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Clean/sanitize auto-generated Markdown activity log files.")
-    parser.add_argument("path", help="Path to the Markdown log file to clean")
+    parser = argparse.ArgumentParser(
+        description="Compact an ActivityLogger Markdown log without redacting it."
+    )
+    parser.add_argument("path", help="Path to the Markdown log file to compact")
     args = parser.parse_args(argv)
+
+    print(PLAINTEXT_WARNING, file=sys.stderr)
 
     in_path = args.path
     if not os.path.exists(in_path):
@@ -620,27 +911,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Error: not a file: {in_path}", file=sys.stderr)
         return 2
 
-    raw_lines = read_text_file(in_path)
-    preamble, sections = split_into_preamble_and_sections(raw_lines)
-
-    out_lines: List[str] = []
-    out_lines.extend(preamble)
-
-    for sec in sections:
-        cleaned_body = sanitize_section_body(sec.body)
-        if not section_has_meaningful_content(cleaned_body):
-            continue
-        out_lines.append(sec.header)
-        if sec.timestamp:
-            out_lines.append(sec.timestamp)
-        out_lines.extend(cleaned_body)
-
-    out_path = cleaned_output_path(in_path)
-    write_text_file(out_path, out_lines)
+    out_path = compact_file(in_path)
     print(out_path)
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

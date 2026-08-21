@@ -19,9 +19,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='ActivityLoggerNative',
     debug=False,
     bootloader_ignore_signals=False,
@@ -36,8 +35,17 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
-app = BUNDLE(
+coll = COLLECT(
     exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='ActivityLoggerNative',
+)
+app = BUNDLE(
+    coll,
     name='ActivityLoggerNative.app',
     icon='assets/ActivityLogger.icns',
     bundle_identifier='com.mk.activitylogger.native',
@@ -45,5 +53,8 @@ app = BUNDLE(
         'CFBundleShortVersionString': '4.1.0',
         'CFBundleVersion': '4.1.0',
         'NSHighResolutionCapable': True,
+        'NSAppleEventsUsageDescription': (
+            'ActivityLogger reads the active browser tab address when browser URL capture is enabled.'
+        ),
     },
 )

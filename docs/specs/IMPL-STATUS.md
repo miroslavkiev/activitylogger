@@ -1,23 +1,26 @@
 # Implementation status
 
-| Feature | Executor | Checker | Notes |
-|---------|----------|---------|-------|
-| Plan | done | FINAL_ACCEPT | IMPLEMENTATION-PLAN.md |
-| F0 | done | F0_ACCEPT | KEEP/AVOID gates; open -W; no JPEG/OCR/Screen Recording |
-| F2 | done | F2_ACCEPT | `~/.config/activitylogger/config.toml`; rejected aliases warn-only |
-| F1 | done | F1_ACCEPT | Native-first titles; AW enricher optional |
-| F3 | done | F3_ACCEPT | `typing_pause_sec=0.5`; keys→events only; no section seal |
-| F5 | done | F5_ACCEPT | default OFF; closed trigger set; `*{HH:MM:SS} · trigger:{name}*` |
-| F4 | done | F4_ACCEPT | default OFF; `> [URL]:`; F5 OFF event-only; F5 ON seals `url_change` |
-| F6 | done | F6_ACCEPT | default OFF; coalesce 400ms; F5 ON `scroll_coalesce` |
+**Verdict:** source, signed deployment, process replacement, and real capture smoke accepted.
 
-## Final aggregate gate (2026-08-15)
+| Area | Result | Operational note |
+|---|---|---|
+| Runtime privacy | Complete | Unknown state fails closed across keys, clicks, URLs, clipboard, and Accessibility work. |
+| Buffers and persistence | Complete | Serialized grouped flush, bounded restoration, capture-date routing, and deadline waits. |
+| Click ordering | Complete | Ordered reservations with generation, context, expiry, and persistence barriers. |
+| Lifecycle | Complete | SIGTERM/SIGINT shutdown, worker supervision, listener health, final flush, nonzero fatal exit. |
+| Config | Complete | Trusted-file checks, finite upper bounds, safe network defaults, warnings for unsafe opt-ins. |
+| Browser URLs | Complete | Default off; safe user information and fragment removal plus total query neutralization. |
+| Cleaner | Complete | Plaintext non-redacting compaction, atomic mode `600` output, bounded oversized-section pass-through. |
+| Dependency and CI | Complete | Exact Python 3.11.9, hashed lock, `macos-15`, lint, audit, staged signing and tamper tests. |
+| Signing source | Complete | Dedicated keychain, nonextractable import, deployed-leaf continuity, pin, explicit rotation warning, one-key entitlement allowlist. |
+| Signed bundle mechanics | Complete | Pinned nested and outer signatures, exact requirement, entitlement and load containment, staged promotion, and tamper rejection passed. Hardened Runtime is intentionally not enabled for the retained local leaf. |
+| Launch Agent lifecycle | Complete | Private canonical plist, bootout/quiesce, bootstrap, rollback or bounded config recovery, and fresh stable exact-PID proof. |
+| Live runtime launch | Complete | Final exact native process remained stable and a real post-restart typing smoke updated the daily log. |
 
-| Check | Result |
-|-------|--------|
-| Consistency vs `00-MASTER.md` F0–F6 | Pass (opt-in defaults OFF; config path; closed triggers; Markdown; no media; `.app` + `open -W`) |
-| `pytest -q tests/` | **161 passed** |
-| App vs logger sources | Binary newer than sources (rebuild not required this gate) |
-| `codesign -d -r- dist/ActivityLoggerNative.app` | `certificate leaf = H"0a609d91…"` (not ad-hoc cdhash only) |
+## Verification
 
-**Verdict: FINAL_ACCEPT**
+The final source gate passed all 335 tests. The strict deployed codesign test passed separately after the final rebuild.
+
+The pinned leaf is `0a609d91ba3541a2b9589363974fa460be0f091c` and bundle identifier is `com.mk.activitylogger.native`. Exact Apple Events-only entitlement, Automation metadata, nested and outer signatures, load containment, safe tamper rejection, and private modes were externally verified. Final native PID `88019` started at 12:57:05 CEST, and the mode `600` daily log grew to 112,535 bytes at 12:57:44 CEST.
+
+The legacy `.codesign/identity.p12` and any redundant login-keychain identity remain mode `600` because irreversible deletion requires explicit operator approval. They do not block runtime.

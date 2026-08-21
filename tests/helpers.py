@@ -1,4 +1,4 @@
-"""Importable test helpers (not pytest conftest — safe to ``import helpers``)."""
+"""Importable test helpers (not pytest conftest, safe to ``import helpers``)."""
 
 from __future__ import annotations
 
@@ -33,20 +33,27 @@ _seed_keys = seed_keys
 def clear_logger_runtime() -> None:
     """Clear buffers, pause/url/scroll state, and drain the AX queue."""
     with il._lock:
-        il._current_heading = "App — Window"
+        il._current_heading = "App - Window"
         il._current_keystrokes.clear()
         il._current_events.clear()
         il._sections.clear()
         il._last_screen_text = ""
         il._last_clipboard_count = 0
         il._last_clipboard_text = ""
+        il._last_clipboard_digest = ""
+        il._last_clipboard_privacy_generation = 0
         il._last_emitted_url = None
         il._pause_secure_app = False
         il._pause_secure_field = False
         il._is_paused = False
         il._current_modifiers.clear()
+        il._physical_modifiers.clear()
+        il._modifier_counts.clear()
         il._secure_field_cache = False
+        il._secure_field_cache_known = False
         il._secure_field_cache_at = 0.0
+        il._secure_field_generation = 0
+        il._privacy_generation = 0
         il._window_bucket = None
         il._scan_pending = False
         il._last_key_activity_mono = None
@@ -54,7 +61,20 @@ def clear_logger_runtime() -> None:
         il._key_flush_hook = None
         il._scroll_burst = None
         il._scroll_diag_emitted = False
+        il._pending_clicks.clear()
+        il._window_apply_generation = 0
+        il._flush_failed = False
+    il._stop_event.clear()
+    il._shutdown_reason = None
+    il._key_deadline_changed.clear()
+    il._scroll_deadline_changed.clear()
+    il._writer_wakeup.clear()
+    il._fatal_worker_event.clear()
     il._state.reset_runtime_controls()
+    # Unit tests exercise key encoding without a live NSWorkspace frontmost app.
+    il._state.last_secure_app_pid = 0
+    il._state.last_secure_app_context = (0, "test", "")
+    il._state.last_secure_app_is_secure = False
     while True:
         try:
             il._ax_jobs.get_nowait()

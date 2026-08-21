@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import queue
-import time
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -111,7 +109,7 @@ def test_clipboard_new_text_after_unpause_is_logged():
 
 def test_is_secure_app_name_positive_and_negative():
     assert il._is_secure_app_name("1Password", "Vault")
-    assert il._is_secure_app_name("Safari", "Bitwarden — Login")
+    assert il._is_secure_app_name("Safari", "Bitwarden \u2014 Login")
     assert not il._is_secure_app_name("Safari", "Example")
 
 
@@ -121,7 +119,7 @@ def test_flush_restore_on_body_write_failure(tmp_path, monkeypatch):
     # Pretend file exists so header path is skipped
     (tmp_path / "daily_log_test.md").write_text("# existing\n", encoding="utf-8")
 
-    batch = [{"heading": "App — Win", "events": ["typed"], "timestamp": "12:00:00"}]
+    batch = [{"heading": "App \u2014 Win", "events": ["typed"], "timestamp": "12:00:00"}]
     with il._lock:
         il.rebind_capture_buffers()
         il._sections.clear()

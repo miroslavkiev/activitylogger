@@ -50,8 +50,10 @@ def test_tc_f2_01_defaults_when_file_missing(tmp_path, monkeypatch):
     assert loaded.flush_interval_sec == 30
     assert loaded.typing_pause_sec == 0.5
     assert loaded.secure_apps == DEFAULT_SECURE_APPS
+    assert loaded.unsafe_full_browser_urls is False
     assert loaded.ax_max_depth == 7
     assert loaded.activitywatch_enricher is True
+    assert loaded.activitywatch_allow_remote is False
     assert loaded.browser_url_capture is False
     assert loaded.capture_triggers_enabled is False
     assert loaded.scroll_coalesce_enabled is False
@@ -183,6 +185,18 @@ def test_tc_f2_08_secure_apps_from_config(tmp_path, monkeypatch):
 
     # Restore defaults for other tests
     il.apply_config(cfg.default_config(home=Path.home()))
+
+
+def test_secure_apps_are_normalized_and_empty_entries_rejected(tmp_path):
+    conf = _write_toml(
+        tmp_path / "config.toml",
+        '[privacy]\nsecure_apps = ["  VaultWarden  ", "PASSWORDS"]\n',
+    )
+    assert cfg.load_config(conf).secure_apps == ("vaultwarden", "passwords")
+
+    _write_toml(conf, '[privacy]\nsecure_apps = ["vault", "   "]\n')
+    with pytest.raises(cfg.ConfigError, match="non-empty"):
+        cfg.load_config(conf)
 
 
 # --- TC-F2-09 ---
@@ -343,6 +357,138 @@ def test_tc_f2_19_scroll_coalesce_ms_floor(tmp_path, monkeypatch):
         cfg.load_config()
 
 
+@pytest.mark.parametrize(
+    "body,key",
+    [
+        ("[timing]\ntyping_pause_sec = nan\n", "typing_pause_sec"),
+        ("[timing]\nsecure_field_cache_sec = inf\n", "secure_field_cache_sec"),
+        ("[timing]\nwindow_check_sec = 3601\n", "window_check_sec"),
+        ("[buffers]\nmax_events = 100001\n", "max_events"),
+    ],
+)
+def test_nonfinite_and_impractical_numbers_are_rejected(tmp_path, body, key):
+    conf = _write_toml(tmp_path / "config.toml", body)
+    with pytest.raises(cfg.ConfigError, match=key):
+        cfg.load_config(conf)
+
+
+def test_config_file_security_checks(tmp_path, monkeypatch):
+    conf = _write_toml(tmp_path / "config.toml", "[timing]\nflush_interval_sec = 30\n")
+
+    conf.chmod(0o666)
+    with pytest.raises(cfg.ConfigError, match="writable"):
+        cfg.load_config(conf)
+
+    conf.chmod(0o644)
+    warnings: list[str] = []
+    cfg.load_config(conf, warn=warnings.append)
+    assert any("readable" in warning for warning in warnings)
+
+    monkeypatch.setattr(cfg.os, "getuid", lambda: conf.stat().st_uid + 1)
+    with pytest.raises(cfg.ConfigError, match="owned"):
+        cfg.load_config(conf)
+
+
+def test_config_symlink_is_rejected(tmp_path):
+    if not getattr(os, "O_NOFOLLOW", 0):
+        pytest.skip("O_NOFOLLOW is unavailable")
+    target = _write_toml(tmp_path / "target.toml", "[timing]\nflush_interval_sec = 30\n")
+    link = tmp_path / "config.toml"
+    link.symlink_to(target)
+    with pytest.raises(cfg.ConfigError, match="unreadable"):
+        cfg.load_config(link)
+
+
+def test_log_dir_creation_and_existing_private_directory(tmp_path):
+    log_dir = tmp_path / "new" / "logs"
+    assert cfg.ensure_log_dir(log_dir) == log_dir
+    assert stat.S_IMODE(log_dir.stat().st_mode) == 0o700
+    assert cfg.ensure_log_dir(log_dir) == log_dir
+
+
+def test_log_dir_rejects_symlink_file_shared_mode_and_foreign_owner(tmp_path, monkeypatch):
+    target = tmp_path / "target"
+    target.mkdir(mode=0o700)
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(cfg.ConfigError, match="symlink"):
+        cfg.ensure_log_dir(link)
+
+    leaf = tmp_path / "leaf"
+    leaf.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(cfg.ConfigError, match="not a directory"):
+        cfg.ensure_log_dir(leaf)
+
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o755)
+    shared.chmod(0o755)
+    with pytest.raises(cfg.ConfigError, match="refusing to chmod"):
+        cfg.ensure_log_dir(shared)
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o755
+
+    foreign = tmp_path / "foreign"
+    foreign.mkdir(mode=0o700)
+    monkeypatch.setattr(cfg.os, "getuid", lambda: foreign.stat().st_uid + 1)
+    with pytest.raises(cfg.ConfigError, match="owned"):
+        cfg.ensure_log_dir(foreign)
+
+
+def test_activitywatch_requires_loopback_without_explicit_opt_in(tmp_path):
+    conf = _write_toml(
+        tmp_path / "config.toml",
+        '[window_titles]\nactivitywatch_base_url = "https://collector.example"\n',
+    )
+    with pytest.raises(cfg.ConfigError, match="loopback"):
+        cfg.load_config(conf)
+
+    _write_toml(
+        conf,
+        "[window_titles]\n"
+        'activitywatch_base_url = "https://collector.example"\n'
+        "activitywatch_allow_remote = true\n",
+    )
+    assert cfg.load_config(conf).activitywatch_allow_remote is True
+
+
+@pytest.mark.parametrize(
+    "url",
+    (
+        "http://user@localhost:5600",
+        "http://user:password@localhost:5600",
+        "https://user:password@collector.example",
+    ),
+)
+def test_activitywatch_rejects_userinfo_even_with_remote_opt_in(tmp_path, url):
+    conf = _write_toml(
+        tmp_path / "config.toml",
+        "[window_titles]\n"
+        f'activitywatch_base_url = "{url}"\n'
+        "activitywatch_allow_remote = true\n",
+    )
+    with pytest.raises(cfg.ConfigError, match="userinfo"):
+        cfg.load_config(conf)
+
+
+def test_unsafe_flags_are_visible_in_warnings_and_startup_diagnostics(tmp_path):
+    conf = _write_toml(
+        tmp_path / "config.toml",
+        "[privacy]\n"
+        "unsafe_full_browser_urls = true\n"
+        "[window_titles]\n"
+        'activitywatch_base_url = "https://collector.example"\n'
+        "activitywatch_allow_remote = true\n",
+    )
+    warnings: list[str] = []
+    loaded = cfg.load_config(conf, warn=warnings.append)
+    joined = "\n".join(warnings)
+    assert "WARNING privacy.unsafe_full_browser_urls=true" in joined
+    assert "WARNING window_titles.activitywatch_allow_remote=true" in joined
+
+    diagnostics = cfg.startup_diag_line(loaded)
+    assert "unsafe_full_browser_urls=True" in diagnostics
+    assert "activitywatch_allow_remote=True" in diagnostics
+
+
 # --- Rejected aliases (MASTER §4 / F2 §6.2) ---
 
 
@@ -412,18 +558,24 @@ def test_tc_f2_15_install_template_substitution(tmp_path, monkeypatch):
     assert install.exists()
     assert "@REPO@" in template.read_text(encoding="utf-8")
 
-    # Install requires a certificate-signed .app under REPO/dist (ops hardening).
-    # Use the real checkout as REPO; write the plist only into tmp.
+    install_text = install.read_text(encoding="utf-8")
+    assert 'verify_activitylogger_app "$APP"' in install_text
+    assert "render_launch_agent.py" in install_text
+
+    # Rendering is independently testable in a clean checkout. The install
+    # script retains strict app verification before invoking this renderer.
     out_plist = tmp_path / "com.mk.activitylogger.plist"
-    env = os.environ.copy()
-    env["ACTIVITYLOGGER_REPO"] = str(repo_root)
-    env["ACTIVITYLOGGER_PLIST_OUT"] = str(out_plist)
     import subprocess
 
     subprocess.run(
-        ["bash", str(install)],
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "render_launch_agent.py"),
+            str(template),
+            str(out_plist),
+            str(repo_root),
+        ],
         check=True,
-        env=env,
         cwd=str(tmp_path),
     )
     body = out_plist.read_text(encoding="utf-8")
