@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import queue
 from dataclasses import replace
 from pathlib import Path
@@ -62,6 +63,13 @@ def clear_logger_runtime() -> None:
         il._scroll_burst = None
         il._scroll_diag_emitted = False
         il._pending_clicks.clear()
+        il._analysis_heading_by_day.clear()
+        il._analysis_markers.clear()
+        il._analysis_marker_overflow_days.clear()
+        il._analysis_runtime_enabled = False
+        il._analysis_idle_active = False
+        il._analysis_last_heartbeat_mono = None
+        il._analysis_sequence = itertools.count(1)
         il._window_apply_generation = 0
         il._flush_failed = False
     il._stop_event.clear()

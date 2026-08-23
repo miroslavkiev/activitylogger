@@ -1,5 +1,6 @@
 # Logs & runtime
 logs/
+private_historical_review/
 *.log
 .activitylogger.lock
 .codesign/

@@ -17,10 +17,19 @@ import stat
 import sys
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import requests
+
+from analysis_log import (
+    CapturedEvent,
+    SectionSnapshot,
+    commit_trial_batch,
+    mark_invalid,
+    prepare_trial_intent,
+    snapshot_sections,
+)
 
 try:
     from pynput import keyboard, mouse
@@ -43,6 +52,17 @@ try:
     AX_AVAILABLE = True
 except ImportError:
     AX_AVAILABLE = False
+
+try:
+    from Quartz import (
+        CGEventSourceSecondsSinceLastEventType,
+        kCGAnyInputEventType,
+        kCGEventSourceStateCombinedSessionState,
+    )
+
+    SYSTEM_IDLE_AVAILABLE = True
+except ImportError:
+    SYSTEM_IDLE_AVAILABLE = False
 
 from browser_url import (
     apply_url_observation,
@@ -78,7 +98,8 @@ from window_titles import (
     merge_native_and_aw,
 )
 
-__version__ = "4.1.0"
+__version__ = "4.2.0"
+ANALYSIS_SHADOW_ENABLED = True
 
 # Config mirrors - seeded from AppConfig defaults (single literal source: config.default_config).
 _DEFAULTS = default_config()
@@ -174,6 +195,7 @@ class LoggerState:
 _state = LoggerState()
 _lock = threading.Lock()
 _flush_lock = threading.Lock()
+_io_lock = threading.Lock()
 _current_heading = ""
 # Same list objects as LoggerState (tests mutate il._current_* / il._sections).
 _current_keystrokes = _state.current_keystrokes
@@ -220,10 +242,20 @@ _writer_wakeup = threading.Event()
 _fatal_worker_event = threading.Event()
 _flush_failed = False
 _click_sequence = itertools.count(1)
+_analysis_sequence = itertools.count(1)
 _pending_clicks: dict[int, dict] = {}
+_analysis_heading_by_day: dict[date, str | None] = {}
+_analysis_markers: list[dict] = []
+_analysis_marker_overflow_days: set[date] = set()
+_analysis_runtime_enabled = False
+_analysis_idle_active = False
+_analysis_last_heartbeat_mono: float | None = None
 _window_apply_generation = 0
 CLICK_RESOLVE_TIMEOUT_SEC = 2.0
 WORKER_JOIN_TIMEOUT_SEC = 6.0
+WORKLOAD_IDLE_SEC = 300.0
+MAX_ANALYSIS_MARKERS = 2000
+ANALYSIS_HEARTBEAT_SEC = 3600.0
 
 _diag_last: dict[str, float] = {}
 _DIAG_MIN_INTERVAL = _DEFAULTS.diag_min_interval_sec
@@ -302,8 +334,9 @@ def apply_config(cfg: AppConfig) -> None:
 
 def _recompute_paused_locked() -> None:
     global _is_paused, _last_key_activity_mono, _privacy_generation, _scroll_burst
+    was_paused = _is_paused
     newly = _pause_secure_app or _pause_secure_field
-    if newly and not _is_paused:
+    if newly and not was_paused:
         _privacy_generation += 1
         _current_modifiers.clear()
         _physical_modifiers.clear()
@@ -316,6 +349,11 @@ def _recompute_paused_locked() -> None:
         _scroll_burst = scroll_discard(_scroll_burst)
         _scroll_deadline_changed.set()
     _is_paused = newly
+    if newly != was_paused:
+        _append_analysis_marker_locked(
+            "privacy_pause_start" if newly else "privacy_pause_end",
+            heading_override="[PRIVATE CONTEXT]",
+        )
 
 
 def is_paused() -> bool:
@@ -696,23 +734,32 @@ def apply_resolved_window(app: str, title: str) -> bool:
 def _seal_open_events_locked(trigger: str) -> None:
     """Seal `_current_events` into `_sections`. Caller holds `_lock`.
 
-    When CAPTURE_TRIGGERS_ENABLED, stores ``trigger`` (must be in CAPTURE_TRIGGERS).
+    Always stores the trigger internally. The legacy field remains feature-gated.
     Do not pass ``typing_pause`` from F3 key-flush paths (reserved; unused in F3 v1).
     """
     if not _current_events:
         return
+    if trigger not in CAPTURE_TRIGGERS:
+        raise ValueError(f"unknown capture trigger: {trigger!r}")
+    if trigger == "typing_pause":
+        raise ValueError("typing_pause is reserved; do not emit as section trigger")
     captured_at = datetime.now().astimezone()
     section: dict = {
         "heading": _current_heading or FALLBACK_HEADING,
         "events": list(_current_events),
         "timestamp": captured_at.strftime("%H:%M:%S"),
         "captured_at": captured_at,
+        "_trigger": trigger,
+        "_analysis_order": min(
+            (
+                event.sequence
+                for event in _current_events
+                if isinstance(event, CapturedEvent) and event.sequence is not None
+            ),
+            default=next(_analysis_sequence),
+        ),
     }
     if CAPTURE_TRIGGERS_ENABLED:
-        if trigger not in CAPTURE_TRIGGERS:
-            raise ValueError(f"unknown capture trigger: {trigger!r}")
-        if trigger == "typing_pause":
-            raise ValueError("typing_pause is reserved; do not emit as section trigger")
         section["trigger"] = trigger
     _sections.append(section)
     _current_events.clear()
@@ -723,7 +770,15 @@ def _flush_keys(*, cause: str = "unknown") -> None:
     global _last_key_flush_cause, _last_key_activity_mono
     if not _current_keystrokes:
         return
-    _current_events.append("".join(_current_keystrokes))
+    payload = "".join(_current_keystrokes)
+    _current_events.append(
+        CapturedEvent(
+            payload,
+            kind="type",
+            payload=payload,
+            sequence=next(_analysis_sequence),
+        )
+    )
     _current_keystrokes.clear()
     _last_key_flush_cause = cause
     _last_key_activity_mono = None
@@ -785,6 +840,98 @@ def _check_typing_pause_idle_locked(now: float | None = None) -> bool:
     return True
 
 
+def _append_analysis_marker_locked(
+    kind: str,
+    payload: str = "",
+    captured_at: datetime | None = None,
+    heading_override: str | None = None,
+) -> None:
+    """Add one shadow-only timeline marker. Caller holds `_lock`."""
+    if not _analysis_runtime_enabled:
+        return
+    stamp = captured_at or datetime.now().astimezone()
+    heading = heading_override or (
+        "[PRIVATE CONTEXT]" if _is_paused else (_current_heading or FALLBACK_HEADING)
+    )
+    sequence = next(_analysis_sequence)
+    _analysis_markers.append(
+        {
+            "heading": heading,
+            "events": [
+                CapturedEvent(
+                    "",
+                    kind=kind,
+                    payload=payload,
+                    captured_at=stamp,
+                    sequence=sequence,
+                )
+            ],
+            "timestamp": stamp.strftime("%H:%M:%S"),
+            "captured_at": stamp,
+            "_trigger": "timeline",
+            "analysis_only": True,
+            "_analysis_order": sequence,
+        }
+    )
+    if len(_analysis_markers) > MAX_ANALYSIS_MARKERS:
+        dropped = _analysis_markers.pop(0)
+        _analysis_marker_overflow_days.add(_section_captured_at(dropped).date())
+
+
+def observe_system_idle(seconds: float | None = None, now: datetime | None = None) -> None:
+    """Record only transitions across the local five-minute idle threshold."""
+    global _analysis_idle_active
+    if not _analysis_runtime_enabled or not SYSTEM_IDLE_AVAILABLE:
+        return
+    try:
+        idle_seconds = (
+            float(seconds)
+            if seconds is not None
+            else float(
+                CGEventSourceSecondsSinceLastEventType(
+                    kCGEventSourceStateCombinedSessionState,
+                    kCGAnyInputEventType,
+                )
+            )
+        )
+    except Exception as e:
+        _diag_rate_limited(f"system idle observation failed [{_exception_category(e)}]")
+        return
+    idle_now = idle_seconds >= WORKLOAD_IDLE_SEC
+    if idle_now == _analysis_idle_active:
+        return
+    stamp = now or datetime.now().astimezone()
+    with _lock:
+        if idle_now:
+            idle_since = stamp - timedelta(seconds=max(0.0, idle_seconds))
+            _append_analysis_marker_locked(
+                "idle_start", idle_since.isoformat(), captured_at=stamp
+            )
+        else:
+            _append_analysis_marker_locked("idle_end", captured_at=stamp)
+        _analysis_idle_active = idle_now
+    _writer_wakeup.set()
+
+
+def maybe_record_analysis_heartbeat(
+    now_mono: float | None = None, stamp: datetime | None = None
+) -> None:
+    """Write one low-overhead continuity marker per hour."""
+    global _analysis_last_heartbeat_mono
+    if not _analysis_runtime_enabled:
+        return
+    current = time.monotonic() if now_mono is None else now_mono
+    if (
+        _analysis_last_heartbeat_mono is not None
+        and current - _analysis_last_heartbeat_mono < ANALYSIS_HEARTBEAT_SEC
+    ):
+        return
+    with _lock:
+        _append_analysis_marker_locked("heartbeat", captured_at=stamp)
+        _analysis_last_heartbeat_mono = current
+    _writer_wakeup.set()
+
+
 def _apply_heading_change_locked(new_heading: str) -> None:
     """Flush keys, seal events, set heading. Caller holds `_lock`."""
     global _current_heading, _last_screen_text, _last_key_activity_mono
@@ -795,6 +942,7 @@ def _apply_heading_change_locked(new_heading: str) -> None:
     _flush_keys(cause="app_switch")
     _seal_open_events_locked("app_switch")
     _current_heading = new_heading
+    _append_analysis_marker_locked("focus")
     _last_screen_text = ""
     _last_key_activity_mono = None
 
@@ -817,6 +965,18 @@ def _add_event_locked(ev: str, seal_trigger: str | None = None) -> bool:
         return False
     cause = seal_trigger or "add_event"
     _flush_keys(cause=cause)
+    if isinstance(ev, CapturedEvent) and ev.sequence is None:
+        ev = CapturedEvent(
+            str(ev),
+            kind=ev.kind,
+            payload=ev.payload,
+            captured_at=ev.captured_at,
+            sequence=next(_analysis_sequence),
+        )
+    elif not isinstance(ev, CapturedEvent):
+        ev = CapturedEvent(
+            str(ev), kind="event", payload=str(ev), sequence=next(_analysis_sequence)
+        )
     _current_events.append(ev)
     if seal_trigger and CAPTURE_TRIGGERS_ENABLED:
         _seal_open_events_locked(seal_trigger)
@@ -833,17 +993,25 @@ def add_event(ev: str, seal_trigger: str | None = None) -> None:
 
 def record_click_event(desc: str) -> None:
     """Append a click line; seal with ``click`` when capture_triggers_enabled."""
-    add_event(f"🖱️ **Клік:** {desc}", seal_trigger="click")
+    add_event(
+        CapturedEvent(f"🖱️ **Клік:** {desc}", kind="click", payload=desc),
+        seal_trigger="click",
+    )
 
 
 def record_clipboard_event(event: str) -> None:
     """Append a clipboard event; seal with ``clipboard`` when capture_triggers_enabled."""
-    add_event(event, seal_trigger="clipboard")
+    captured = (
+        event
+        if isinstance(event, CapturedEvent)
+        else CapturedEvent(event, kind="clipboard", payload=event)
+    )
+    add_event(captured, seal_trigger="clipboard")
 
 
 def record_url_event(event: str) -> None:
     """Append a URL event; seal with ``url_change`` when capture_triggers_enabled (F4+F5)."""
-    add_event(event, seal_trigger="url_change")
+    add_event(CapturedEvent(event, kind="url", payload=event), seal_trigger="url_change")
 
 
 def on_scroll_tick(
@@ -912,7 +1080,14 @@ def _flush_scroll_burst_locked() -> bool:
     # Inline add_event path while holding lock (avoid re-entrant lock).
     # Always seal: F5 ON stores trigger scroll_coalesce; F5 OFF seals with no trigger field.
     _flush_keys(cause="scroll_coalesce")
-    _current_events.append(line)
+    _current_events.append(
+        CapturedEvent(
+            line,
+            kind="scroll",
+            payload=line,
+            sequence=next(_analysis_sequence),
+        )
+    )
     _seal_open_events_locked("scroll_coalesce")
     return True
 
@@ -1102,7 +1277,10 @@ def record_browser_url_observation(
         )
         _last_emitted_url = new_last
         if event:
-            need_flush = _add_event_locked(event, "url_change")
+            need_flush = _add_event_locked(
+                CapturedEvent(event, kind="url", payload=new_last or event),
+                "url_change",
+            )
     if need_flush:
         flush_to_file()
 
@@ -1345,7 +1523,12 @@ def scan_screen() -> None:
                 return
             prev = _last_screen_text
         if prev[:SCREEN_COMPARE_MAX_CHARS] != text[:SCREEN_COMPARE_MAX_CHARS]:
-            event = f"💻 **Екран:**\n{format_markdown_fenced_text(text[:2000])}"
+            payload = text[:2000]
+            event = CapturedEvent(
+                f"💻 **Екран:**\n{format_markdown_fenced_text(payload)}",
+                kind="screen",
+                payload=payload,
+            )
             with _lock:
                 if (
                     _stop_event.is_set()
@@ -1414,7 +1597,16 @@ def _resolve_pending_click(
         section.pop("click_context", None)
         section.pop("expires_mono", None)
         clean_desc = sanitize_markdown_inline(desc, "Unknown")
-        section["events"].append(f"🖱️ **Клік:** {clean_desc}")
+        section["events"].append(
+            CapturedEvent(
+                f"🖱️ **Клік:** {clean_desc}",
+                kind="click",
+                payload=clean_desc,
+                captured_at=section.get("captured_at"),
+                sequence=section.get("_analysis_order"),
+            )
+        )
+        section["_trigger"] = "click"
         if CAPTURE_TRIGGERS_ENABLED:
             section["trigger"] = "click"
         need_file = _buffers_need_file_flush_locked()
@@ -1436,6 +1628,8 @@ def _reserve_pending_click(context: tuple[int, str, str]) -> int | None:
             "events": [],
             "timestamp": captured_at.strftime("%H:%M:%S"),
             "captured_at": captured_at,
+            "_trigger": "click",
+            "_analysis_order": next(_analysis_sequence),
             "pending_click": pending_id,
             "privacy_generation": _privacy_generation,
             "click_context": context,
@@ -1612,7 +1806,12 @@ def apply_clipboard_change(
     if paused:
         return count, new_text, None
     if text and text != last_text:
-        return count, text, f"> [CLIPBOARD]:\n{format_markdown_fenced_text(text[:2000])}"
+        payload = text[:2000]
+        return count, text, CapturedEvent(
+            f"> [CLIPBOARD]:\n{format_markdown_fenced_text(payload)}",
+            kind="clipboard",
+            payload=payload,
+        )
     return count, new_text, None
 
 
@@ -1632,7 +1831,12 @@ def _apply_clipboard_change_digest(
     digest = _clipboard_digest(text) if text else last_digest
     if paused or not text or digest == last_digest:
         return count, digest, None
-    event = f"> [CLIPBOARD]:\n{format_markdown_fenced_text(text[:2000])}"
+    payload = text[:2000]
+    event = CapturedEvent(
+        f"> [CLIPBOARD]:\n{format_markdown_fenced_text(payload)}",
+        kind="clipboard",
+        payload=payload,
+    )
     return count, digest, event
 
 
@@ -1710,6 +1914,8 @@ def window_checker_loop() -> None:
     while not _stop_event.wait(WINDOW_CHECK_SEC):
         app, title = resolve_window()
         process_window_check_cycle(app=app, title=title)
+        observe_system_idle()
+        maybe_record_analysis_heartbeat()
 
 
 def typing_pause_idle_loop() -> None:
@@ -1788,9 +1994,18 @@ def _log_header_lines(
 
 
 def _write_to_file(filepath: Path, lines: list[str], append: bool = True) -> bool:
+    with _io_lock:
+        return _write_to_file_locked(filepath, lines, append)
+
+
+def _write_to_file_locked(filepath: Path, lines: list[str], append: bool) -> bool:
     fd = None
+    original = b""
+    original_size = 0
+    mutated = False
     try:
-        flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
+        data = "".join(lines).encode("utf-8")
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         fd = os.open(filepath, flags, 0o600)
@@ -1798,11 +2013,36 @@ def _write_to_file(filepath: Path, lines: list[str], append: bool = True) -> boo
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
             raise OSError("refusing non-regular or foreign-owned log file")
         os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "a" if append else "w", encoding="utf-8") as f:
-            fd = None
-            f.writelines(lines)
+        original_size = info.st_size
+        if append:
+            os.lseek(fd, 0, os.SEEK_END)
+        else:
+            if original_size:
+                os.lseek(fd, 0, os.SEEK_SET)
+                original = os.read(fd, original_size)
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, os.SEEK_SET)
+        mutated = True
+        offset = 0
+        while offset < len(data):
+            written = os.write(fd, data[offset:])
+            if written <= 0:
+                raise OSError("short log write")
+            offset += written
+        os.fsync(fd)
         return True
     except Exception as e:
+        if fd is not None and mutated:
+            try:
+                os.ftruncate(fd, 0 if not append else original_size)
+                if not append and original:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    offset = 0
+                    while offset < len(original):
+                        offset += os.write(fd, original[offset:])
+                os.fsync(fd)
+            except OSError:
+                pass
         print(
             f"[ActivityLogger] WRITE ERROR [{_exception_category(e)}]",
             file=sys.stderr,
@@ -1840,28 +2080,61 @@ def _section_captured_at(section: dict) -> datetime:
     return datetime.now().astimezone()
 
 
-def _format_sections(sections: list[dict]) -> list[str]:
+def _format_sections(sections: list[dict] | tuple[SectionSnapshot, ...]) -> list[str]:
+    snapshots = sections if sections and isinstance(sections[0], SectionSnapshot) else snapshot_sections(sections)
     lines: list[str] = []
-    for section in sections:
-        trigger = section.get("trigger")
-        ts_line = format_section_timestamp_line(section["timestamp"], trigger)
-        heading = sanitize_markdown_inline(section.get("heading"), FALLBACK_HEADING)
-        lines.append(f"## {heading}\n{ts_line}\n\n")
-        for event in section["events"]:
-            lines.append(f"{str(event).strip()}\n\n")
+    for section in snapshots:
+        if section.analysis_only:
+            continue
+        trigger = section.trigger if CAPTURE_TRIGGERS_ENABLED and section.trigger != "unknown" else None
+        ts_line = format_section_timestamp_line(section.timestamp, trigger)
+        lines.append(f"## {section.heading}\n{ts_line}\n\n")
+        for event in section.events:
+            lines.append(f"{event.legacy.strip()}\n\n")
         lines.append("---\n\n")
     return lines
 
 
 def _write_section_group(day: date, captured_at: datetime, sections: list[dict]) -> bool:
-    today = datetime.now().astimezone().date()
-    filepath = _get_filepath() if day == today else _get_filepath(captured_at)
+    snapshots = snapshot_sections(sections)
+    legacy_lines = _format_sections(snapshots)
+    filepath = _get_filepath(captured_at)
+    legacy_ok = not legacy_lines
     is_new = not filepath.exists() or filepath.stat().st_size == 0
-    if is_new and not _write_to_file(
+    if legacy_lines and is_new and not _write_to_file(
         filepath, _log_header_lines(captured_at=captured_at), append=False
     ):
         return False
-    return not sections or _write_to_file(filepath, _format_sections(sections))
+    if legacy_lines:
+        legacy_ok = _write_to_file(filepath, legacy_lines)
+    if not legacy_ok:
+        return False
+    return True
+
+
+def _write_analysis_group(
+    day: date,
+    snapshots: tuple[SectionSnapshot, ...],
+    trial: tuple[str, tuple] | None,
+) -> None:
+    """Best-effort shadow write after authoritative legacy data commits."""
+    if not ANALYSIS_SHADOW_ENABLED or not snapshots or trial is None:
+        return
+    try:
+        _batch_id, records = trial
+        _analysis_heading_by_day[day] = commit_trial_batch(
+            LOG_DIR,
+            day,
+            records,
+            __version__,
+            _analysis_heading_by_day.get(day),
+        )
+    except Exception as e:
+        try:
+            mark_invalid(LOG_DIR, day, f"shadow {_exception_category(e)}")
+        except Exception:
+            pass
+        _diag_rate_limited(f"analysis shadow write failed [{_exception_category(e)}]")
 
 
 def flush_to_file() -> bool:
@@ -1893,8 +2166,77 @@ def flush_to_file() -> bool:
                     ),
                     len(_sections),
                 )
+                has_pending = barrier < len(_sections)
                 to_write = list(_sections[:barrier])
-                del _sections[:barrier]
+                marker_write: list[dict] = []
+                marker_overflow_days: set[date] = set()
+                if not has_pending:
+                    marker_write = list(_analysis_markers)
+                    marker_overflow_days = set(_analysis_marker_overflow_days)
+
+                shadow_sections = list(to_write) + marker_write
+                shadow_sections.sort(
+                    key=lambda section: (
+                        int(section.get("_analysis_order") or sys.maxsize),
+                        _section_captured_at(section),
+                    )
+                )
+                shadow_groups: list[tuple[date, list[dict]]] = []
+                for section in shadow_sections:
+                    day = _section_captured_at(section).date()
+                    if shadow_groups and shadow_groups[-1][0] == day:
+                        shadow_groups[-1][1].append(section)
+                    else:
+                        shadow_groups.append((day, [section]))
+                guard_error: Exception | None = None
+                for overflow_day in marker_overflow_days:
+                    try:
+                        mark_invalid(
+                            LOG_DIR, overflow_day, "timeline marker overflow"
+                        )
+                    except Exception as e:
+                        guard_error = e
+                        break
+                shadow_trials: list[
+                    tuple[date, tuple[SectionSnapshot, ...], tuple | None]
+                ] = []
+                intent_errors: list[Exception] = []
+                for day, sections in shadow_groups:
+                    snapshots = snapshot_sections(sections)
+                    trial = None
+                    if ANALYSIS_SHADOW_ENABLED and guard_error is None:
+                        try:
+                            trial = prepare_trial_intent(
+                                LOG_DIR, day, snapshots, __version__
+                            )
+                        except Exception as e:
+                            intent_errors.append(e)
+                            try:
+                                mark_invalid(
+                                    LOG_DIR,
+                                    day,
+                                    f"intent {_exception_category(e)}",
+                                )
+                            except Exception as marker_error:
+                                guard_error = marker_error
+                    shadow_trials.append((day, snapshots, trial))
+                if guard_error is None:
+                    del _sections[:barrier]
+                    if not has_pending:
+                        _analysis_markers.clear()
+                        _analysis_marker_overflow_days.clear()
+
+            for error in intent_errors:
+                _diag_rate_limited(
+                    f"analysis shadow intent failed [{_exception_category(error)}]"
+                )
+            if guard_error is not None:
+                _flush_failed = True
+                _diag_rate_limited(
+                    "analysis shadow guard failed "
+                    f"[{_exception_category(guard_error)}]"
+                )
+                return False
 
             groups: list[tuple[date, datetime, list[dict]]] = []
             for section in to_write:
@@ -1919,11 +2261,28 @@ def flush_to_file() -> bool:
                     "persistence write failed"
                     + (f": dropped {dropped} oldest buffered sections" if dropped else "")
                 )
+                with _lock:
+                    _analysis_markers[:0] = marker_write
+                    _analysis_marker_overflow_days.update(marker_overflow_days)
+                for trial_day, _snapshots, trial in shadow_trials:
+                    if trial is not None:
+                        try:
+                            mark_invalid(LOG_DIR, trial_day, "legacy write failed")
+                        except Exception:
+                            pass
                 return False
+            for day, snapshots, trial in shadow_trials:
+                _write_analysis_group(day, snapshots, trial)
+            marker_write = []
             _flush_failed = False
             return True
         except Exception as e:
             dropped = _restore_sections(locals().get("uncommitted", locals().get("to_write", [])))
+            with _lock:
+                _analysis_markers[:0] = locals().get("marker_write", [])
+                _analysis_marker_overflow_days.update(
+                    locals().get("marker_overflow_days", set())
+                )
             _flush_failed = True
             _diag_rate_limited(
                 f"persistence flush error [{_exception_category(e)}]"
@@ -2071,7 +2430,8 @@ def _stop_and_join_listeners(
 
 
 def main() -> int:
-    global _shutdown_reason
+    global _analysis_idle_active, _analysis_last_heartbeat_mono
+    global _analysis_runtime_enabled, _shutdown_reason
     status = 0
     workers: list[threading.Thread] = []
     m_listener = None
@@ -2109,6 +2469,11 @@ def main() -> int:
         if not acquire_instance_lock():
             _diag("FATAL: another ActivityLogger instance holds the lock, exiting")
             return 1
+        _analysis_runtime_enabled = ANALYSIS_SHADOW_ENABLED
+        _analysis_idle_active = False
+        _analysis_last_heartbeat_mono = None
+        with _lock:
+            _append_analysis_marker_locked("session_start", f"version={__version__}")
         if not PYNPUT_AVAILABLE:
             _diag("FATAL: pynput is not installed")
             return 1
@@ -2199,8 +2564,14 @@ def main() -> int:
                 status = 1
         _discard_all_pending_clicks()
         flush_scroll_burst_on_shutdown()
+        with _lock:
+            reason = _shutdown_reason or "normal"
+            _append_analysis_marker_locked("session_stop", reason)
         if not flush_to_file():
             status = 1
+        _analysis_runtime_enabled = False
+        _analysis_idle_active = False
+        _analysis_last_heartbeat_mono = None
         _close_instance_lock()
         if _shutdown_reason is not None:
             _diag(f"shutdown requested {_shutdown_reason}")

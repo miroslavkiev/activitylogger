@@ -115,7 +115,7 @@ def test_is_secure_app_name_positive_and_negative():
 
 def test_flush_restore_on_body_write_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(il, "LOG_DIR", tmp_path)
-    monkeypatch.setattr(il, "_get_filepath", lambda: tmp_path / "daily_log_test.md")
+    monkeypatch.setattr(il, "_get_filepath", lambda *_args: tmp_path / "daily_log_test.md")
     # Pretend file exists so header path is skipped
     (tmp_path / "daily_log_test.md").write_text("# existing\n", encoding="utf-8")
 
@@ -139,7 +139,7 @@ def test_flush_success_clears_sections(tmp_path, monkeypatch):
     monkeypatch.setattr(il, "LOG_DIR", tmp_path)
     path = tmp_path / "daily_log_test.md"
     path.write_text("# existing\n", encoding="utf-8")
-    monkeypatch.setattr(il, "_get_filepath", lambda: path)
+    monkeypatch.setattr(il, "_get_filepath", lambda *_args: path)
 
     with il._lock:
         il.rebind_capture_buffers()

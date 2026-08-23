@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import analysis_log as al
 import interleaved_logger as il
 
 
@@ -31,6 +32,55 @@ def test_flush_restores_in_place_after_path_failure(monkeypatch):
     assert il.flush_to_file() is False
     assert il._sections is identity
     assert [s["events"] for s in il._sections] == [["kept"]]
+
+
+def test_flush_keeps_sections_until_trial_guard_is_durable(monkeypatch):
+    pending = _section("kept", datetime.now(timezone.utc))
+    il._sections.append(pending)
+
+    def fail_intent(*args):
+        assert il._sections == [pending]
+        raise OSError("intent")
+
+    monkeypatch.setattr(il, "prepare_trial_intent", fail_intent)
+    monkeypatch.setattr(il, "mark_invalid", lambda *args: (_ for _ in ()).throw(OSError("marker")))
+    monkeypatch.setattr(
+        il,
+        "_write_section_group",
+        lambda *args: pytest.fail("legacy write started without a durable trial guard"),
+    )
+    assert il.flush_to_file() is False
+    assert il._sections == [pending]
+
+
+def test_cross_day_trial_intent_retry_is_idempotent(monkeypatch):
+    first = datetime(2026, 8, 20, 23, 59, tzinfo=timezone.utc)
+    second = first + timedelta(minutes=2)
+    il._sections.extend([_section("first", first), _section("second", second)])
+    real_prepare = il.prepare_trial_intent
+    failed = False
+
+    def prepare(log_dir, day, sections, version):
+        if day == second.date() and not failed:
+            raise OSError("intent")
+        return real_prepare(log_dir, day, sections, version)
+
+    def mark(log_dir, day, reason):
+        nonlocal failed
+        if day == second.date() and not failed:
+            failed = True
+            raise OSError("marker")
+        return al.mark_invalid(log_dir, day, reason)
+
+    monkeypatch.setattr(il, "prepare_trial_intent", prepare)
+    monkeypatch.setattr(il, "mark_invalid", mark)
+    monkeypatch.setattr(il, "_write_section_group", lambda *args: True)
+    monkeypatch.setattr(il, "_write_analysis_group", lambda *args: None)
+    assert il.flush_to_file() is False
+    assert len(il._sections) == 2
+    assert il.flush_to_file() is True
+    first_intents = al.read_intents(al.intent_path(il.LOG_DIR, first.date()))
+    assert len(first_intents) == 1
 
 
 def test_flush_restores_only_uncommitted_date_groups(monkeypatch):
@@ -113,6 +163,24 @@ def test_secure_writer_forces_private_mode(tmp_path):
     path = tmp_path / "log.md"
     assert il._write_to_file(path, ["secret\n"])
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_secure_writer_rolls_back_a_failed_append(tmp_path, monkeypatch):
+    path = tmp_path / "log.md"
+    path.write_text("before\n", encoding="utf-8")
+    real_write = il.os.write
+    calls = 0
+
+    def fail_after_partial(fd, data):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return real_write(fd, data[:2])
+        raise OSError("disk full")
+
+    monkeypatch.setattr(il.os, "write", fail_after_partial)
+    assert il._write_to_file(path, ["after\n"]) is False
+    assert path.read_text(encoding="utf-8") == "before\n"
 
 
 def test_file_writer_retries_with_capped_backoff(monkeypatch):
