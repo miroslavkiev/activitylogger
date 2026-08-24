@@ -9,50 +9,30 @@ import re
 import stat
 import tempfile
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Sequence
 
 from analysis_log import (
+    ANALYSIS_FORMAT_V2,
+    TIMELINE_ROW_DECLARATION,
     AnalysisRecord,
     _ensure_private_dir,
     _intents_match_records,
-    _json_string,
     _records_digest,
+    analysis_format_for_day,
     intent_path,
     parse_records,
     read_intents,
-    render_records,
+    render_records_v2,
     shadow_paths,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "private_analysis_review"
 COMPACT_FORMAT = "activitylogger-analysis-view-v1"
-SOURCE_FORMAT = "activitylogger-analysis-v1"
-TIMELINE_ROW_DECLARATION = (
-    "> timeline-row: @HH:MM:SS+ZZZZ|@+seconds kind [json-string]\n"
-)
-MAX_DELTA_SECONDS = 900
-TIMELINE_KINDS = frozenset(
-    {
-        "focus",
-        "heartbeat",
-        "idle_start",
-        "idle_end",
-        "privacy_pause_start",
-        "privacy_pause_end",
-        "session_start",
-        "session_stop",
-    }
-)
 
 _DAY_RE = re.compile(r"^# Work Log - (?P<day>[0-9]{4}-[0-9]{2}-[0-9]{2})\n$")
-_ABSOLUTE_TIME_RE = re.compile(r"^[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$")
-_TIMELINE_ROW_RE = re.compile(
-    r"^@(?P<time>(?:[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}|\+[0-9]+)) "
-    r"(?P<kind>[a-z_]+)(?: (?P<payload>\".*\"))?\n$"
-)
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_ANALYSIS_RE = re.compile(
@@ -67,6 +47,10 @@ _SOURCE_RECORDS_RE = re.compile(
 )
 _GENERATED_LINE = "> generated locally by ActivityLogger compact-view-v1\n"
 _SCOPE_LINE = (
+    "> scope: derived-view; authority=source-analysis-and-intent; "
+    "coverage=not-asserted\n"
+)
+_LEGACY_SCOPE_LINE = (
     "> scope: derived-view; authority=analysis-v1-and-intent; "
     "coverage=not-asserted\n"
 )
@@ -132,63 +116,8 @@ def _stable_read(path: Path) -> bytes:
 def _render_compact_body(
     records: Sequence[AnalysisRecord],
 ) -> tuple[str, int, int]:
-    lines: list[str] = []
-    last_heading: str | None = None
-    previous_timeline: AnalysisRecord | None = None
-    absolute_rows = 0
-    delta_rows = 0
-    index = 0
-    while index < len(records):
-        record = records[index]
-        if record.heading != last_heading:
-            lines.append(f"## {record.heading}\n")
-            last_heading = record.heading
-            previous_timeline = None
-
-        if _can_inline_timeline(records, index):
-            delta: int | None = None
-            if (
-                previous_timeline is not None
-                and previous_timeline.heading == record.heading
-                and previous_timeline.captured_at.utcoffset()
-                == record.captured_at.utcoffset()
-            ):
-                delta = int(
-                    (record.captured_at - previous_timeline.captured_at).total_seconds()
-                )
-            if delta is not None and 0 <= delta <= MAX_DELTA_SECONDS:
-                time_spec = f"+{delta}"
-                delta_rows += 1
-            else:
-                time_spec = record.captured_at.strftime("%H:%M:%S%z")
-                absolute_rows += 1
-            payload = "" if record.payload == "" else f" {_json_string(record.payload)}"
-            lines.append(f"@{time_spec} {record.kind}{payload}\n")
-            previous_timeline = record
-            index += 1
-            continue
-
-        end = index + 1
-        while end < len(records) and not _can_inline_timeline(records, end):
-            end += 1
-        body, last_heading = render_records(records[index:end], last_heading)
-        lines.append(body)
-        previous_timeline = None
-        index = end
-    return "".join(lines), absolute_rows, delta_rows
-
-
-def _can_inline_timeline(
-    records: Sequence[AnalysisRecord], index: int
-) -> bool:
-    record = records[index]
-    return (
-        record.trigger == "timeline"
-        and record.kind in TIMELINE_KINDS
-        and record.section_start
-        and record.section_captured_at == record.captured_at
-        and (index + 1 == len(records) or records[index + 1].section_start)
-    )
+    body, _last_heading, absolute_rows, delta_rows = render_records_v2(records)
+    return body, absolute_rows, delta_rows
 
 
 def render_compact_view(
@@ -227,8 +156,6 @@ def parse_compact_records(text: str) -> tuple[AnalysisRecord, ...]:
     try:
         restored: list[str] = []
         day: date | None = None
-        heading_seen = False
-        previous_timeline_at: datetime | None = None
         format_seen = False
         declaration_seen = False
         analysis_seen = False
@@ -252,12 +179,13 @@ def parse_compact_records(text: str) -> tuple[AnalysisRecord, ...]:
                 if format_seen or content_seen:
                     raise ValueError("invalid compact-view format header")
                 format_seen = True
-                restored.append(f"> format: {SOURCE_FORMAT}\n")
+                restored.append(f"> format: {ANALYSIS_FORMAT_V2}\n")
                 continue
             if line == TIMELINE_ROW_DECLARATION:
                 if declaration_seen or content_seen:
                     raise ValueError("invalid compact-view timeline declaration")
                 declaration_seen = True
+                restored.append(line)
                 continue
             analysis_match = _SOURCE_ANALYSIS_RE.fullmatch(line)
             if analysis_match is not None:
@@ -289,54 +217,21 @@ def parse_compact_records(text: str) -> tuple[AnalysisRecord, ...]:
                 generated_seen = True
                 restored.append(line)
                 continue
-            if line == _SCOPE_LINE:
+            if line in {_SCOPE_LINE, _LEGACY_SCOPE_LINE}:
                 if scope_seen or content_seen:
                     raise ValueError("invalid compact-view scope header")
                 scope_seen = True
                 continue
             if line.startswith("## "):
                 content_seen = True
-                heading_seen = True
-                previous_timeline_at = None
                 restored.append(line)
                 continue
             if line.startswith("### ") or line.startswith("- "):
                 content_seen = True
-                previous_timeline_at = None
                 restored.append(line)
                 continue
-            row = _TIMELINE_ROW_RE.fullmatch(line)
-            if row is not None:
-                if not heading_seen or day is None:
-                    raise ValueError("timeline row has no heading or day")
-                kind = row.group("kind")
-                if kind not in TIMELINE_KINDS:
-                    raise ValueError("unknown compact-view timeline kind")
-                time_spec = row.group("time")
-                if time_spec.startswith("+"):
-                    seconds = int(time_spec[1:])
-                    if previous_timeline_at is None or seconds > MAX_DELTA_SECONDS:
-                        raise ValueError("invalid compact-view timeline delta")
-                    captured_at = previous_timeline_at + timedelta(seconds=seconds)
-                else:
-                    if not _ABSOLUTE_TIME_RE.fullmatch(time_spec):
-                        raise ValueError("invalid compact-view absolute time")
-                    captured_at = datetime.strptime(
-                        f"{day.isoformat()} {time_spec}", "%Y-%m-%d %H:%M:%S%z"
-                    )
-                if captured_at.date() != day:
-                    raise ValueError("timeline row is outside the compact-view day")
-                payload_text = row.group("payload")
-                payload = json.loads(payload_text) if payload_text is not None else ""
-                if not isinstance(payload, str):
-                    raise ValueError("compact-view payload is not a string")
-                restored.append(
-                    f"### {captured_at.strftime('%H:%M:%S%z')} timeline\n"
-                    f"- {kind}: {_json_string(payload)}\n"
-                )
-                previous_timeline_at = captured_at
+            if line.startswith("@"):
                 content_seen = True
-                continue
             restored.append(line)
 
         if not all(
@@ -352,7 +247,11 @@ def parse_compact_records(text: str) -> tuple[AnalysisRecord, ...]:
             )
         ):
             raise ValueError("compact-view header is incomplete")
-        records = parse_records("".join(restored))
+        records = parse_records(
+            "".join(restored),
+            day=day,
+            expected_format=ANALYSIS_FORMAT_V2,
+        )
         if len(records) != expected_count or _records_digest(records) != expected_digest:
             raise ValueError("compact-view records do not match provenance")
         return records
@@ -440,7 +339,11 @@ def export_compact_day(
     analysis_digest = hashlib.sha256(analysis_bytes).hexdigest()
     intent_digest = hashlib.sha256(intent_bytes).hexdigest()
     try:
-        records = parse_records(analysis_bytes.decode("utf-8"))
+        records = parse_records(
+            analysis_bytes.decode("utf-8"),
+            day=day,
+            expected_format=analysis_format_for_day(day),
+        )
         intents = read_intents(intent_file)
     except (KeyError, OSError, UnicodeError, ValueError, TypeError) as exc:
         raise ValueError(

@@ -143,6 +143,13 @@ def test_compact_view_round_trip_preserves_every_record_field_and_digest():
     with pytest.raises(ValueError, match="invalid compact view"):
         av.parse_compact_records(tampered)
 
+    legacy_scope = rendered.replace(
+        "authority=source-analysis-and-intent",
+        "authority=analysis-v1-and-intent",
+        1,
+    )
+    assert av.parse_compact_records(legacy_scope) == records
+
 
 def test_cross_midnight_content_uses_exact_v1_fallback():
     section_at = datetime(2026, 8, 22, 0, 0, 1, tzinfo=PLUS_TWO)

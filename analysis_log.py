@@ -36,6 +36,25 @@ EVENT_KINDS = frozenset(
     }
 )
 ANALYSIS_TRIGGERS = CAPTURE_TRIGGERS | {"historical", "timeline"}
+ANALYSIS_FORMAT_V1 = "activitylogger-analysis-v1"
+ANALYSIS_FORMAT_V2 = "activitylogger-analysis-v2"
+ANALYSIS_V2_START_DAY = date(2026, 8, 25)
+TIMELINE_ROW_DECLARATION = (
+    "> timeline-row: @HH:MM:SS+ZZZZ|@+seconds kind [json-string]\n"
+)
+MAX_TIMELINE_DELTA_SECONDS = 900
+TIMELINE_KINDS = frozenset(
+    {
+        "focus",
+        "heartbeat",
+        "idle_start",
+        "idle_end",
+        "privacy_pause_start",
+        "privacy_pause_end",
+        "session_start",
+        "session_stop",
+    }
+)
 HEADER_END = "<!-- header-end -->\n"
 _END_RE = re.compile(br"<!-- batch-end id=[0-9a-f]+ sha256=[0-9a-f]{64} -->\n")
 _START_RE = re.compile(
@@ -50,6 +69,11 @@ _SECTION_RE = re.compile(
 )
 _DAY_RE = re.compile(r"^# Work Log - (?P<day>[0-9]{4}-[0-9]{2}-[0-9]{2})\n$")
 _OFFSET_RE = re.compile(r"^> utc-offset: (?P<offset>[+-][0-9]{4})\n$")
+_ABSOLUTE_TIME_RE = re.compile(r"^[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$")
+_TIMELINE_ROW_RE = re.compile(
+    r"^@(?P<time>(?:[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}|\+[0-9]+)) "
+    r"(?P<kind>[a-z_]+)(?: (?P<payload>\".*\"))?\n$"
+)
 
 
 class CapturedEvent(str):
@@ -263,10 +287,78 @@ def render_records(
     return "".join(lines), last_heading
 
 
-def parse_records(
+def analysis_format_for_day(day: date) -> str:
+    """Return the single analysis format allowed for a calendar day."""
+    return ANALYSIS_FORMAT_V2 if day >= ANALYSIS_V2_START_DAY else ANALYSIS_FORMAT_V1
+
+
+def _can_inline_timeline(
+    records: Sequence[AnalysisRecord], index: int
+) -> bool:
+    record = records[index]
+    return (
+        record.trigger == "timeline"
+        and record.kind in TIMELINE_KINDS
+        and record.section_start
+        and record.section_captured_at == record.captured_at
+        and (index + 1 == len(records) or records[index + 1].section_start)
+    )
+
+
+def render_records_v2(
+    records: Sequence[AnalysisRecord], last_heading: str | None = None
+) -> tuple[str, str | None, int, int]:
+    """Render one independently anchored v2 append batch."""
+    lines: list[str] = []
+    previous_timeline: AnalysisRecord | None = None
+    absolute_rows = 0
+    delta_rows = 0
+    index = 0
+    while index < len(records):
+        record = records[index]
+        if record.heading != last_heading:
+            lines.append(f"## {record.heading}\n")
+            last_heading = record.heading
+            previous_timeline = None
+
+        if _can_inline_timeline(records, index):
+            delta: int | None = None
+            if (
+                previous_timeline is not None
+                and previous_timeline.heading == record.heading
+                and previous_timeline.captured_at.utcoffset()
+                == record.captured_at.utcoffset()
+            ):
+                delta = int(
+                    (record.captured_at - previous_timeline.captured_at).total_seconds()
+                )
+            if delta is not None and 0 <= delta <= MAX_TIMELINE_DELTA_SECONDS:
+                time_spec = f"+{delta}"
+                delta_rows += 1
+            else:
+                time_spec = record.captured_at.strftime("%H:%M:%S%z")
+                absolute_rows += 1
+            payload = "" if record.payload == "" else f" {_json_string(record.payload)}"
+            lines.append(f"@{time_spec} {record.kind}{payload}\n")
+            previous_timeline = record
+            index += 1
+            continue
+
+        end = index + 1
+        while end < len(records) and not _can_inline_timeline(records, end):
+            end += 1
+        body, last_heading = render_records(records[index:end], last_heading)
+        lines.append(body)
+        previous_timeline = None
+        index = end
+    return "".join(lines), last_heading, absolute_rows, delta_rows
+
+
+def _parse_v1_records(
     text: str, *, day: date | None = None, strict: bool = True
 ) -> tuple[AnalysisRecord, ...]:
     """Expand an analysis log into its exact ordered event records."""
+    expected_day = day
     heading: str | None = None
     section_at: datetime | None = None
     trigger: str | None = None
@@ -283,12 +375,15 @@ def parse_records(
         if day_match is not None:
             if strict and (content_seen or day_seen):
                 raise ValueError("analysis day header is misplaced or repeated")
-            day = date.fromisoformat(day_match.group("day"))
+            declared_day = date.fromisoformat(day_match.group("day"))
+            if expected_day is not None and declared_day != expected_day:
+                raise ValueError("analysis day header does not match the expected day")
+            day = declared_day
             day_seen = True
             continue
         if _OFFSET_RE.fullmatch(line) is not None:
             continue
-        if line == "> format: activitylogger-analysis-v1\n":
+        if line == f"> format: {ANALYSIS_FORMAT_V1}\n":
             if content_seen or format_seen:
                 raise ValueError("analysis format header is misplaced or repeated")
             format_seen = True
@@ -376,6 +471,134 @@ def parse_records(
     return tuple(records)
 
 
+def _declared_analysis_format(text: str) -> str | None:
+    declared = [
+        line[len("> format: ") :].rstrip("\r\n")
+        for line in text.splitlines(keepends=True)
+        if line.startswith("> format: ")
+    ]
+    if not declared:
+        return None
+    if len(declared) != 1 or declared[0] not in {
+        ANALYSIS_FORMAT_V1,
+        ANALYSIS_FORMAT_V2,
+    }:
+        raise ValueError("analysis format header is unknown or repeated")
+    return declared[0]
+
+
+def _parse_v2_records(
+    text: str, *, expected_day: date | None = None
+) -> tuple[AnalysisRecord, ...]:
+    restored: list[str] = []
+    day: date | None = None
+    heading_seen = False
+    previous_timeline_at: datetime | None = None
+    format_seen = False
+    declaration_seen = False
+    generated_seen = False
+    content_seen = False
+    for line in text.splitlines(keepends=True):
+        day_match = _DAY_RE.fullmatch(line)
+        if day_match is not None:
+            if day is not None or content_seen:
+                raise ValueError("analysis v2 day header is misplaced or repeated")
+            day = date.fromisoformat(day_match.group("day"))
+            if expected_day is not None and day != expected_day:
+                raise ValueError("analysis day header does not match the expected day")
+            restored.append(line)
+            continue
+        if line == f"> format: {ANALYSIS_FORMAT_V2}\n":
+            if format_seen or content_seen:
+                raise ValueError("analysis v2 format header is misplaced or repeated")
+            format_seen = True
+            restored.append(f"> format: {ANALYSIS_FORMAT_V1}\n")
+            continue
+        if line == TIMELINE_ROW_DECLARATION:
+            if declaration_seen or content_seen:
+                raise ValueError("analysis v2 timeline declaration is misplaced or repeated")
+            declaration_seen = True
+            continue
+        if line.startswith("> generated locally by ActivityLogger "):
+            if generated_seen or content_seen:
+                raise ValueError("analysis v2 generator header is misplaced or repeated")
+            generated_seen = True
+            restored.append(line)
+            continue
+        if line.startswith("## "):
+            content_seen = True
+            heading_seen = True
+            previous_timeline_at = None
+            restored.append(line)
+            continue
+        if line.startswith("### ") or line.startswith("- "):
+            content_seen = True
+            previous_timeline_at = None
+            restored.append(line)
+            continue
+        row = _TIMELINE_ROW_RE.fullmatch(line)
+        if row is not None:
+            if not heading_seen or day is None:
+                raise ValueError("analysis v2 timeline row has no heading or day")
+            kind = row.group("kind")
+            if kind not in TIMELINE_KINDS:
+                raise ValueError("unknown analysis v2 timeline kind")
+            time_spec = row.group("time")
+            if time_spec.startswith("+"):
+                seconds = int(time_spec[1:])
+                if (
+                    previous_timeline_at is None
+                    or seconds > MAX_TIMELINE_DELTA_SECONDS
+                ):
+                    raise ValueError("invalid analysis v2 timeline delta")
+                captured_at = previous_timeline_at + timedelta(seconds=seconds)
+            else:
+                if not _ABSOLUTE_TIME_RE.fullmatch(time_spec):
+                    raise ValueError("invalid analysis v2 absolute time")
+                captured_at = datetime.strptime(
+                    f"{day.isoformat()} {time_spec}", "%Y-%m-%d %H:%M:%S%z"
+                )
+            if captured_at.date() != day:
+                raise ValueError("analysis v2 timeline row is outside its day")
+            payload_text = row.group("payload")
+            payload = json.loads(payload_text) if payload_text is not None else ""
+            if not isinstance(payload, str):
+                raise ValueError("analysis v2 payload is not a string")
+            restored.append(
+                f"### {captured_at.strftime('%H:%M:%S%z')} timeline\n"
+                f"- {kind}: {_json_string(payload)}\n"
+            )
+            previous_timeline_at = captured_at
+            content_seen = True
+            continue
+        restored.append(line)
+    if not all((day is not None, format_seen, declaration_seen, generated_seen)):
+        raise ValueError("analysis v2 header is incomplete")
+    return _parse_v1_records("".join(restored), day=expected_day)
+
+
+def parse_records(
+    text: str,
+    *,
+    day: date | None = None,
+    strict: bool = True,
+    expected_format: str | None = None,
+) -> tuple[AnalysisRecord, ...]:
+    """Expand a strict v1 or v2 analysis document into exact records."""
+    if expected_format not in {None, ANALYSIS_FORMAT_V1, ANALYSIS_FORMAT_V2}:
+        raise ValueError("unknown expected analysis format")
+    declared = _declared_analysis_format(text)
+    if expected_format is not None and declared != expected_format:
+        raise ValueError("analysis format does not match the expected day format")
+    if declared == ANALYSIS_FORMAT_V2:
+        if not strict:
+            raise ValueError("analysis v2 requires strict document parsing")
+        return _parse_v2_records(text, expected_day=day)
+    if declared is None and expected_format == ANALYSIS_FORMAT_V2:
+        raise ValueError("analysis v2 format header is missing")
+    return _parse_v1_records(text, day=day, strict=strict)
+
+
 def read_batches(path: Path) -> tuple[FramedBatch, ...]:
     """Read and verify every committed batch in one shadow file."""
     data = path.read_bytes()
@@ -459,7 +682,11 @@ def validate_trial(
     if not errors:
         try:
             intents = read_intents(intent_path(log_dir, day))
-            projected = parse_records(analysis_path.read_text(encoding="utf-8"))
+            projected = parse_records(
+                analysis_path.read_text(encoding="utf-8"),
+                day=day,
+                expected_format=analysis_format_for_day(day),
+            )
             if not _intents_match_records(intents, projected):
                 errors.append("analysis differs from intents")
             starts = sum(record.kind == "session_start" for record in projected)
@@ -510,8 +737,11 @@ def validate_trial(
                 elif not intent_path(log_dir, day + timedelta(days=1)).is_file():
                     errors.append("missing next-day intent proof")
                 else:
+                    next_day = day + timedelta(days=1)
                     next_records = parse_records(
-                        next_analysis.read_text(encoding="utf-8")
+                        next_analysis.read_text(encoding="utf-8"),
+                        day=next_day,
+                        expected_format=analysis_format_for_day(next_day),
                     )
                     next_intents = read_intents(
                         intent_path(log_dir, day + timedelta(days=1))
@@ -656,6 +886,41 @@ def _write_all(fd: int, data: bytes) -> None:
         offset += written
 
 
+def _declared_analysis_format_bytes(data: bytes) -> str | None:
+    declared = [
+        line[len(b"> format: ") :]
+        for line in data.splitlines()
+        if line.startswith(b"> format: ")
+    ]
+    if not declared:
+        return None
+    if len(declared) != 1:
+        raise ValueError("analysis format header is repeated")
+    try:
+        value = declared[0].decode("ascii")
+    except UnicodeDecodeError:
+        raise ValueError("analysis format header is not ASCII") from None
+    if value not in {ANALYSIS_FORMAT_V1, ANALYSIS_FORMAT_V2}:
+        raise ValueError("analysis format header is unknown")
+    return value
+
+
+def _declared_analysis_day_bytes(data: bytes) -> date | None:
+    declared = [
+        line[len(b"# Work Log - ") :]
+        for line in data.splitlines()
+        if line.startswith(b"# Work Log - ")
+    ]
+    if not declared:
+        return None
+    if len(declared) != 1:
+        raise ValueError("analysis day header is repeated")
+    try:
+        return date.fromisoformat(declared[0].decode("ascii"))
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError("analysis day header is invalid") from None
+
+
 def append_batch(
     path: Path,
     *,
@@ -724,9 +989,20 @@ def append_batch(
 
 
 def append_plain_batch(
-    path: Path, *, header: str, body: str, validate_existing: bool
+    path: Path,
+    *,
+    header: str,
+    body: str,
+    expected_format: str,
+    expected_day: date,
+    validate_existing: bool,
 ) -> None:
     """Append clean LLM text with in-process rollback and restart validation."""
+    header_bytes = header.encode("utf-8")
+    if _declared_analysis_format_bytes(header_bytes) != expected_format:
+        raise ValueError("new analysis header does not match its expected format")
+    if _declared_analysis_day_bytes(header_bytes) != expected_day:
+        raise ValueError("new analysis header does not match its expected day")
     _ensure_private_dir(path.parent)
     flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
@@ -739,13 +1015,24 @@ def append_plain_batch(
         os.fchmod(fd, 0o600)
         original_size = info.st_size
         if original_size:
+            os.lseek(fd, original_size - 1, os.SEEK_SET)
+            if os.read(fd, 1) != b"\n":
+                raise OSError("analysis file has an incomplete tail")
+            os.lseek(fd, 0, os.SEEK_SET)
+            prefix = os.read(fd, min(original_size, 1024))
+            if _declared_analysis_format_bytes(prefix) != expected_format:
+                raise ValueError("analysis file format does not match its day")
+            if _declared_analysis_day_bytes(prefix) != expected_day:
+                raise ValueError("analysis file date does not match its path")
+        if original_size and validate_existing:
             os.lseek(fd, 0, os.SEEK_SET)
             existing = os.read(fd, original_size)
-            if not existing.endswith(b"\n"):
-                raise OSError("analysis file has an incomplete tail")
-            if validate_existing:
-                parse_records(existing.decode("utf-8"))
-        else:
+            parse_records(
+                existing.decode("utf-8"),
+                day=expected_day,
+                expected_format=expected_format,
+            )
+        elif not original_size:
             _write_all(fd, header.encode("utf-8"))
             os.fsync(fd)
             original_size = os.lseek(fd, 0, os.SEEK_END)
@@ -771,16 +1058,28 @@ def commit_trial_batch(
     last_heading: str | None,
 ) -> str | None:
     analysis_path, _invalid_path = shadow_paths(log_dir, day)
-    body, next_heading = render_records(records, last_heading)
+    expected_format = analysis_format_for_day(day)
+    if expected_format == ANALYSIS_FORMAT_V2:
+        body, next_heading, _absolute_rows, _delta_rows = render_records_v2(
+            records, last_heading
+        )
+        format_header = (
+            f"> format: {ANALYSIS_FORMAT_V2}\n{TIMELINE_ROW_DECLARATION}"
+        )
+    else:
+        body, next_heading = render_records(records, last_heading)
+        format_header = f"> format: {ANALYSIS_FORMAT_V1}\n"
     header = (
         f"# Work Log - {day.isoformat()}\n\n"
-        f"> format: activitylogger-analysis-v1\n"
+        f"{format_header}"
         f"> generated locally by ActivityLogger {version}; payloads are exact JSON strings\n"
     )
     append_plain_batch(
         analysis_path,
         header=header,
         body=body,
+        expected_format=expected_format,
+        expected_day=day,
         validate_existing=last_heading is None,
     )
     return next_heading

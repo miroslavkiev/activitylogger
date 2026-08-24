@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,29 @@ INSTALL = REPO / "scripts" / "install_launch_agent.sh"
 VERIFY = REPO / "scripts" / "lib" / "require_certificate_leaf.sh"
 RENDER = REPO / "scripts" / "render_launch_agent.py"
 PIN = REPO / ".codesign" / "leaf.sha1"
+
+
+def test_source_bundle_and_readme_versions_match():
+    source = (REPO / "interleaved_logger.py").read_text(encoding="utf-8")
+    spec = (REPO / "ActivityLoggerNative.spec").read_text(encoding="utf-8")
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    source_version = re.search(r'^__version__ = "([0-9.]+)"$', source, re.MULTILINE)
+    short_version = re.search(
+        r"'CFBundleShortVersionString': '([0-9.]+)'", spec
+    )
+    bundle_version = re.search(r"'CFBundleVersion': '([0-9.]+)'", spec)
+    readme_version = re.search(r"\*\*Version:\*\* ([0-9.]+)", readme)
+
+    assert source_version is not None
+    assert short_version is not None
+    assert bundle_version is not None
+    assert readme_version is not None
+    assert {
+        source_version.group(1),
+        short_version.group(1),
+        bundle_version.group(1),
+        readme_version.group(1),
+    } == {"4.3.0"}
 
 
 def test_codesign_is_strict_and_pinned():
