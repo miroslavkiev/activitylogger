@@ -429,15 +429,11 @@ def test_focus_and_idle_transitions_are_shadow_only(
     monkeypatch.setattr(il, "_analysis_runtime_enabled", True)
     monkeypatch.setattr(il, "SYSTEM_IDLE_AVAILABLE", True)
     il.apply_heading_change("Editor - Report")
-    il.observe_system_idle(
-        301, now=datetime(2026, 8, 23, 10, 10, tzinfo=timezone.utc)
-    )
-    il.observe_system_idle(
-        350, now=datetime(2026, 8, 23, 10, 11, tzinfo=timezone.utc)
-    )
-    il.observe_system_idle(
-        0, now=datetime(2026, 8, 23, 10, 12, tzinfo=timezone.utc)
-    )
+    marker_day = il._analysis_markers[-1]["captured_at"]
+    marker_at = marker_day.replace(hour=10, minute=10, second=0, microsecond=0)
+    il.observe_system_idle(301, now=marker_at)
+    il.observe_system_idle(350, now=marker_at + timedelta(minutes=1))
+    il.observe_system_idle(0, now=marker_at + timedelta(minutes=2))
     assert il.flush_to_file() is True
     analysis = next(
         (tmp_path / "logs" / "analysis_shadow").glob("analysis_log_*.md")

@@ -94,6 +94,16 @@ After one complete calendar day, run the payload-free gate:
 
 Do not switch formats unless this command passes and an independent review confirms the result. A failed shadow write creates a private `analysis_invalid_YYYY-MM-DD.txt` marker and does not make the authoritative daily-log write fail.
 
+To create a smaller local review view for one completed analysis day, run the explicit day-scoped exporter:
+
+```bash
+.venv/bin/python scripts/export_compact_analysis.py --day YYYY-MM-DD
+```
+
+It writes `private_analysis_review/compact_analysis_YYYY-MM-DD.md` with private permissions. This directory is outside `logs/`, and the filename does not match ContextAggregator's daily-log discovery pattern. The original `activitylogger-analysis-v1` file and its intent journal remain authoritative. The exporter verifies their exact agreement and verifies that the compact view reconstructs the same records. It does not assert that the day has enough heartbeat coverage for cutover. Run the payload-free gate separately for that decision.
+
+The compact view is local plaintext restructuring. It does not redact payloads, call an LLM, or use the network. Manually review and redact it before any external use.
+
 The old compactor remains available during the trial:
 
 ```bash
