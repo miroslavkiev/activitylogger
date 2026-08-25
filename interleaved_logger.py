@@ -23,12 +23,22 @@ from pathlib import Path
 import requests
 
 from analysis_log import (
+    ANALYSIS_ONLY_START_DAY,
     CapturedEvent,
     SectionSnapshot,
+    authoritative_day_present,
+    authoritative_transaction_pending,
+    commit_authoritative_transaction,
     commit_trial_batch,
     mark_invalid,
+    prepare_authoritative_transaction,
     prepare_trial_intent,
+    publish_day_ready,
+    records_from_sections,
+    recover_authoritative_transaction,
     snapshot_sections,
+    validate_authoritative_day,
+    validate_day_ready,
 )
 
 try:
@@ -98,7 +108,7 @@ from window_titles import (
     merge_native_and_aw,
 )
 
-__version__ = "4.3.0"
+__version__ = "4.4.0"
 ANALYSIS_SHADOW_ENABLED = True
 
 # Config mirrors - seeded from AppConfig defaults (single literal source: config.default_config).
@@ -1979,6 +1989,17 @@ def _get_filepath(captured_at: datetime | None = None) -> Path:
     return LOG_DIR / f"daily_log_{stamp.strftime('%Y-%m-%d')}.md"
 
 
+def _analysis_only_day(day: date) -> bool:
+    return day >= ANALYSIS_ONLY_START_DAY
+
+
+def _initialize_analysis_persistence(day: date) -> dict[date, str | None]:
+    headings = recover_authoritative_transaction(LOG_DIR)
+    if _analysis_only_day(day):
+        headings[day] = validate_authoritative_day(LOG_DIR, day)
+    return headings
+
+
 def _log_header_lines(
     *, captured_at: datetime | None = None, include_started: bool = False
 ) -> list[str]:
@@ -2097,6 +2118,12 @@ def _format_sections(sections: list[dict] | tuple[SectionSnapshot, ...]) -> list
 
 def _write_section_group(day: date, captured_at: datetime, sections: list[dict]) -> bool:
     snapshots = snapshot_sections(sections)
+    if (
+        captured_at.date() != day
+        or _analysis_only_day(day)
+        or any(snapshot.captured_at.date() != day for snapshot in snapshots)
+    ):
+        raise ValueError("legacy writer is disabled for this captured day")
     legacy_lines = _format_sections(snapshots)
     filepath = _get_filepath(captured_at)
     legacy_ok = not legacy_lines
@@ -2138,10 +2165,32 @@ def _write_analysis_group(
 
 
 def flush_to_file() -> bool:
-    """Detach and durably write resolved sections, restoring only failed groups."""
+    """Persist resolved sections, with manifest ownership for analysis-only days."""
     global _flush_failed, _scroll_burst
     with _flush_lock:
+        detached = False
+        authoritative_owned = False
+        authoritative_committed = False
+        pre_sections: list[dict] = []
+        pre_markers: list[dict] = []
+        uncommitted: list[dict] = []
+        marker_overflow_days: set[date] = set()
+        ready_days: set[date] = set()
+        mixed_legacy_error = False
         try:
+            try:
+                recovered = recover_authoritative_transaction(LOG_DIR)
+                _analysis_heading_by_day.update(recovered)
+            except Exception as e:
+                _flush_failed = True
+                _fatal_worker_event.set()
+                _request_stop()
+                _diag_rate_limited(
+                    "authoritative recovery failed "
+                    f"[{_exception_category(e)}]"
+                )
+                return False
+
             with _lock:
                 if SCROLL_COALESCE_ENABLED:
                     if _is_paused:
@@ -2174,22 +2223,42 @@ def flush_to_file() -> bool:
                     marker_write = list(_analysis_markers)
                     marker_overflow_days = set(_analysis_marker_overflow_days)
 
-                shadow_sections = list(to_write) + marker_write
-                shadow_sections.sort(
+                analysis_sections = list(to_write) + marker_write
+                analysis_sections.sort(
                     key=lambda section: (
                         int(section.get("_analysis_order") or sys.maxsize),
                         _section_captured_at(section),
                     )
                 )
-                shadow_groups: list[tuple[date, list[dict]]] = []
-                for section in shadow_sections:
+                analysis_by_day: dict[date, list[dict]] = {}
+                for section in analysis_sections:
                     day = _section_captured_at(section).date()
-                    if shadow_groups and shadow_groups[-1][0] == day:
-                        shadow_groups[-1][1].append(section)
-                    else:
-                        shadow_groups.append((day, [section]))
+                    analysis_by_day.setdefault(day, []).append(section)
+                analysis_groups = list(analysis_by_day.items())
+                pre_groups = [
+                    group for group in analysis_groups if not _analysis_only_day(group[0])
+                ]
+                authoritative_groups = [
+                    group for group in analysis_groups if _analysis_only_day(group[0])
+                ]
+                pre_sections = [
+                    section
+                    for section in to_write
+                    if not _analysis_only_day(_section_captured_at(section).date())
+                ]
+                uncommitted = list(pre_sections)
+                pre_markers = [
+                    section
+                    for section in marker_write
+                    if not _analysis_only_day(_section_captured_at(section).date())
+                ]
                 guard_error: Exception | None = None
+                authoritative_guard = False
                 for overflow_day in marker_overflow_days:
+                    if _analysis_only_day(overflow_day):
+                        guard_error = RuntimeError("authoritative timeline marker overflow")
+                        authoritative_guard = True
+                        break
                     try:
                         mark_invalid(
                             LOG_DIR, overflow_day, "timeline marker overflow"
@@ -2201,7 +2270,7 @@ def flush_to_file() -> bool:
                     tuple[date, tuple[SectionSnapshot, ...], tuple | None]
                 ] = []
                 intent_errors: list[Exception] = []
-                for day, sections in shadow_groups:
+                for day, sections in pre_groups:
                     snapshots = snapshot_sections(sections)
                     trial = None
                     if ANALYSIS_SHADOW_ENABLED and guard_error is None:
@@ -2220,11 +2289,158 @@ def flush_to_file() -> bool:
                             except Exception as marker_error:
                                 guard_error = marker_error
                     shadow_trials.append((day, snapshots, trial))
-                if guard_error is None:
+                if authoritative_groups and pre_sections and guard_error is None:
+                    legacy_groups: list[tuple[date, datetime, list[dict]]] = []
+                    for section in pre_sections:
+                        captured_at = _section_captured_at(section)
+                        day = captured_at.date()
+                        if legacy_groups and legacy_groups[-1][0] == day:
+                            legacy_groups[-1][2].append(section)
+                        else:
+                            legacy_groups.append((day, captured_at, [section]))
+                    for day, captured_at, sections in legacy_groups:
+                        try:
+                            legacy_ok = _write_section_group(
+                                day, captured_at, sections
+                            )
+                        except Exception:
+                            legacy_ok = False
+                        if not legacy_ok:
+                            mixed_legacy_error = True
+                            break
+                        committed_ids = {id(section) for section in sections}
+                        _sections[:] = [
+                            section
+                            for section in _sections
+                            if id(section) not in committed_ids
+                        ]
+                    if not mixed_legacy_error:
+                        for day, snapshots, trial in shadow_trials:
+                            _write_analysis_group(day, snapshots, trial)
+                        shadow_trials = []
+                        pre_marker_ids = {id(section) for section in pre_markers}
+                        _analysis_markers[:] = [
+                            section
+                            for section in _analysis_markers
+                            if id(section) not in pre_marker_ids
+                        ]
+                        _analysis_marker_overflow_days.difference_update(
+                            day
+                            for day in marker_overflow_days
+                            if not _analysis_only_day(day)
+                        )
+                        pre_sections = []
+                        pre_markers = []
+                        uncommitted = []
+                authoritative_error: Exception | None = None
+                authoritative_uncertain = False
+                if (
+                    authoritative_groups
+                    and guard_error is None
+                    and not mixed_legacy_error
+                ):
+                    try:
+                        transaction_groups = [
+                            (day, records_from_sections(snapshot_sections(sections)))
+                            for day, sections in authoritative_groups
+                        ]
+                        ready_days = {
+                            day - timedelta(days=1)
+                            for day, records in transaction_groups
+                            if any(record.kind == "heartbeat" for record in records)
+                            and _analysis_only_day(day - timedelta(days=1))
+                        }
+                        prepare_authoritative_transaction(
+                            LOG_DIR,
+                            transaction_groups,
+                            __version__,
+                        )
+                        authoritative_owned = True
+                        authoritative_section_ids = {
+                            id(section)
+                            for section in to_write
+                            if _analysis_only_day(
+                                _section_captured_at(section).date()
+                            )
+                        }
+                        _sections[:] = [
+                            section
+                            for section in _sections
+                            if id(section) not in authoritative_section_ids
+                        ]
+                        if not has_pending:
+                            authoritative_marker_ids = {
+                                id(section)
+                                for section in marker_write
+                                if _analysis_only_day(
+                                    _section_captured_at(section).date()
+                                )
+                            }
+                            _analysis_markers[:] = [
+                                section
+                                for section in _analysis_markers
+                                if id(section) not in authoritative_marker_ids
+                            ]
+                            _analysis_marker_overflow_days.intersection_update(
+                                day
+                                for day in marker_overflow_days
+                                if not _analysis_only_day(day)
+                            )
+                    except Exception as e:
+                        authoritative_error = e
+                        try:
+                            pending_was_published = authoritative_transaction_pending(
+                                LOG_DIR
+                            )
+                        except Exception as pending_error:
+                            authoritative_error = pending_error
+                            pending_was_published = False
+                            authoritative_uncertain = True
+                        if pending_was_published:
+                            authoritative_owned = True
+                            authoritative_uncertain = True
+                            authoritative_section_ids = {
+                                id(section)
+                                for section in to_write
+                                if _analysis_only_day(
+                                    _section_captured_at(section).date()
+                                )
+                            }
+                            _sections[:] = [
+                                section
+                                for section in _sections
+                                if id(section) not in authoritative_section_ids
+                            ]
+                            if not has_pending:
+                                authoritative_marker_ids = {
+                                    id(section)
+                                    for section in marker_write
+                                    if _analysis_only_day(
+                                        _section_captured_at(section).date()
+                                    )
+                                }
+                                _analysis_markers[:] = [
+                                    section
+                                    for section in _analysis_markers
+                                    if id(section) not in authoritative_marker_ids
+                                ]
+                                _analysis_marker_overflow_days.intersection_update(
+                                    day
+                                    for day in marker_overflow_days
+                                    if not _analysis_only_day(day)
+                                )
+                if (
+                    guard_error is None
+                    and authoritative_error is None
+                    and not detached
+                    and not authoritative_owned
+                    and not mixed_legacy_error
+                ):
                     del _sections[:barrier]
                     if not has_pending:
                         _analysis_markers.clear()
                         _analysis_marker_overflow_days.clear()
+                    detached = True
 
             for error in intent_errors:
                 _diag_rate_limited(
@@ -2232,14 +2448,101 @@ def flush_to_file() -> bool:
                 )
             if guard_error is not None:
                 _flush_failed = True
+                if authoritative_guard:
+                    _fatal_worker_event.set()
+                    _request_stop()
                 _diag_rate_limited(
-                    "analysis shadow guard failed "
+                    "persistence guard failed "
                     f"[{_exception_category(guard_error)}]"
                 )
                 return False
+            if mixed_legacy_error:
+                for trial_day, _snapshots, trial in shadow_trials:
+                    if trial is not None:
+                        try:
+                            mark_invalid(LOG_DIR, trial_day, "legacy write failed")
+                        except Exception:
+                            pass
+                _flush_failed = True
+                _diag_rate_limited("persistence write failed")
+                return False
+            if authoritative_error is not None:
+                _flush_failed = True
+                if authoritative_uncertain:
+                    _fatal_worker_event.set()
+                    _request_stop()
+                _diag_rate_limited(
+                    "authoritative prepare failed "
+                    f"[{_exception_category(authoritative_error)}]"
+                )
+                return False
+
+            if authoritative_owned:
+                try:
+                    committed = commit_authoritative_transaction(LOG_DIR)
+                    _analysis_heading_by_day.update(committed)
+                    authoritative_committed = True
+                    for completed_day in sorted(ready_days):
+                        if authoritative_day_present(
+                            LOG_DIR, completed_day
+                        ) and not validate_day_ready(LOG_DIR, completed_day):
+                            publish_day_ready(LOG_DIR, completed_day)
+                except Exception as e:
+                    with _lock:
+                        pre_ids = {id(section) for section in pre_sections}
+                        _sections[:] = [
+                            section
+                            for section in _sections
+                            if id(section) not in pre_ids
+                        ]
+                        marker_ids = {id(section) for section in pre_markers}
+                        _analysis_markers[:] = [
+                            section
+                            for section in _analysis_markers
+                            if id(section) not in marker_ids
+                        ]
+                        _analysis_markers[:0] = pre_markers
+                        _analysis_marker_overflow_days.update(
+                            day
+                            for day in marker_overflow_days
+                            if not _analysis_only_day(day)
+                        )
+                    dropped = _restore_sections(pre_sections)
+                    _flush_failed = True
+                    _fatal_worker_event.set()
+                    _request_stop()
+                    _diag_rate_limited(
+                        "authoritative finalization failed "
+                        f"[{_exception_category(e)}]"
+                        + (
+                            f"; dropped {dropped} oldest buffered sections"
+                            if dropped
+                            else ""
+                        )
+                    )
+                    return False
+                with _lock:
+                    pre_ids = {id(section) for section in pre_sections}
+                    _sections[:] = [
+                        section
+                        for section in _sections
+                        if id(section) not in pre_ids
+                    ]
+                    marker_ids = {id(section) for section in pre_markers}
+                    _analysis_markers[:] = [
+                        section
+                        for section in _analysis_markers
+                        if id(section) not in marker_ids
+                    ]
+                    _analysis_marker_overflow_days.difference_update(
+                        day
+                        for day in marker_overflow_days
+                        if not _analysis_only_day(day)
+                    )
+                detached = True
 
             groups: list[tuple[date, datetime, list[dict]]] = []
-            for section in to_write:
+            for section in pre_sections:
                 captured_at = _section_captured_at(section)
                 day = captured_at.date()
                 if groups and groups[-1][0] == day:
@@ -2247,7 +2550,6 @@ def flush_to_file() -> bool:
                 else:
                     groups.append((day, captured_at, [section]))
 
-            uncommitted = list(to_write)
             for index, (day, captured_at, sections) in enumerate(groups):
                 uncommitted = sections[:]
                 for _, _, remaining in groups[index + 1 :]:
@@ -2262,8 +2564,12 @@ def flush_to_file() -> bool:
                     + (f": dropped {dropped} oldest buffered sections" if dropped else "")
                 )
                 with _lock:
-                    _analysis_markers[:0] = marker_write
-                    _analysis_marker_overflow_days.update(marker_overflow_days)
+                    _analysis_markers[:0] = pre_markers
+                    _analysis_marker_overflow_days.update(
+                        overflow_day
+                        for overflow_day in marker_overflow_days
+                        if not _analysis_only_day(overflow_day)
+                    )
                 for trial_day, _snapshots, trial in shadow_trials:
                     if trial is not None:
                         try:
@@ -2273,17 +2579,23 @@ def flush_to_file() -> bool:
                 return False
             for day, snapshots, trial in shadow_trials:
                 _write_analysis_group(day, snapshots, trial)
-            marker_write = []
+            pre_markers = []
             _flush_failed = False
             return True
         except Exception as e:
-            dropped = _restore_sections(locals().get("uncommitted", locals().get("to_write", [])))
-            with _lock:
-                _analysis_markers[:0] = locals().get("marker_write", [])
-                _analysis_marker_overflow_days.update(
-                    locals().get("marker_overflow_days", set())
-                )
+            dropped = _restore_sections(uncommitted if detached else [])
+            if detached:
+                with _lock:
+                    _analysis_markers[:0] = pre_markers
+                    _analysis_marker_overflow_days.update(
+                        overflow_day
+                        for overflow_day in marker_overflow_days
+                        if not _analysis_only_day(overflow_day)
+                    )
             _flush_failed = True
+            if authoritative_owned and not authoritative_committed:
+                _fatal_worker_event.set()
+                _request_stop()
             _diag_rate_limited(
                 f"persistence flush error [{_exception_category(e)}]"
                 + (f"; dropped {dropped} oldest buffered sections" if dropped else "")
@@ -2469,6 +2781,18 @@ def main() -> int:
         if not acquire_instance_lock():
             _diag("FATAL: another ActivityLogger instance holds the lock, exiting")
             return 1
+        startup_stamp = datetime.now().astimezone()
+        startup_day = startup_stamp.date()
+        try:
+            _analysis_heading_by_day.update(
+                _initialize_analysis_persistence(startup_day)
+            )
+        except Exception as e:
+            _diag(
+                "FATAL authoritative startup validation "
+                f"[{_exception_category(e)}]"
+            )
+            return 1
         _analysis_runtime_enabled = ANALYSIS_SHADOW_ENABLED
         _analysis_idle_active = False
         _analysis_last_heartbeat_mono = None
@@ -2478,15 +2802,25 @@ def main() -> int:
             _diag("FATAL: pynput is not installed")
             return 1
 
-        filepath = _get_filepath()
-        if not filepath.exists() or filepath.stat().st_size == 0:
-            if _write_to_file(filepath, _log_header_lines(include_started=True), append=False):
-                _diag(f"Log file created: {filepath}")
-            else:
-                _diag(f"Failed to create log file at {filepath}")
-                return 1
+        if _analysis_only_day(startup_day):
+            _diag(f"Analysis v2 is authoritative for {startup_day.isoformat()}")
         else:
-            _diag(f"Log file exists: {filepath}")
+            filepath = _get_filepath(startup_stamp)
+            if not filepath.exists() or filepath.stat().st_size == 0:
+                if _write_to_file(
+                    filepath,
+                    _log_header_lines(
+                        captured_at=startup_stamp,
+                        include_started=True,
+                    ),
+                    append=False,
+                ):
+                    _diag(f"Log file created: {filepath}")
+                else:
+                    _diag(f"Failed to create log file at {filepath}")
+                    return 1
+            else:
+                _diag(f"Log file exists: {filepath}")
 
         app, title = resolve_window()
         body = build_heading_body(app, title)

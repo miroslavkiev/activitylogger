@@ -16,11 +16,11 @@ from analysis_log import (  # noqa: E402
     ANALYSIS_FORMAT_V1,
     ANALYSIS_FORMAT_V2,
     _intents_match_records,
+    analysis_paths,
     analysis_format_for_day,
     intent_path,
     parse_records,
     read_intents,
-    shadow_paths,
 )
 from config import load_config  # noqa: E402
 
@@ -67,7 +67,7 @@ def _format_name(text: str) -> str:
 
 
 def check_day(log_dir: Path, day: date) -> DayIntegrity:
-    analysis_file, invalid_file = shadow_paths(log_dir, day)
+    analysis_file, invalid_file = analysis_paths(log_dir, day)
     intent_file = intent_path(log_dir, day)
     analysis_bytes = analysis_file.read_bytes()
     intent_bytes = intent_file.read_bytes()
@@ -114,7 +114,7 @@ def _print_result(day: date, result: DayIntegrity) -> None:
 
 
 def _failure_metadata(log_dir: Path, day: date) -> tuple[str, bool]:
-    analysis_file, invalid_file = shadow_paths(log_dir, day)
+    analysis_file, invalid_file = analysis_paths(log_dir, day)
     try:
         format_name = _format_name(analysis_file.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError):

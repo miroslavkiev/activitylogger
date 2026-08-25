@@ -20,12 +20,12 @@ from analysis_log import (
     _ensure_private_dir,
     _intents_match_records,
     _records_digest,
+    analysis_paths,
     analysis_format_for_day,
     intent_path,
     parse_records,
     read_intents,
     render_records_v2,
-    shadow_paths,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -324,12 +324,12 @@ def export_compact_day(
     *,
     today: date | None = None,
 ) -> ViewMetrics:
-    """Export one completed, intent-verified v1 day to a private compact view."""
+    """Export one completed, intent-verified analysis day to a private compact view."""
     cutoff = today or datetime.now().astimezone().date()
     if day >= cutoff:
         raise ValueError("compact view requires a completed calendar day")
     output_root = _prepare_output_dir(log_dir, output_dir)
-    analysis_file, invalid_file = shadow_paths(log_dir, day)
+    analysis_file, invalid_file = analysis_paths(log_dir, day)
     intent_file = intent_path(log_dir, day)
     if invalid_file.exists():
         raise ValueError("analysis day has an invalid marker")

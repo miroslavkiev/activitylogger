@@ -890,6 +890,14 @@ def compact_file(input_path: str, output_path: str | None = None) -> str:
     """Compact one Markdown log into an atomic, private plaintext output."""
     destination = output_path or compacted_output_path(input_path)
     with open(input_path, "r", encoding="utf-8", errors="replace") as source:
+        for line in source:
+            if line.startswith("## "):
+                break
+            if line.rstrip("\r\n").startswith(
+                "> format: activitylogger-analysis-"
+            ):
+                raise ValueError("analysis logs are already compact; refusing compaction")
+        source.seek(0)
         write_text_file(destination, iter_compacted_lines(source))
     return destination
 

@@ -50,8 +50,8 @@ app = BUNDLE(
     icon='assets/ActivityLogger.icns',
     bundle_identifier='com.mk.activitylogger.native',
     info_plist={
-        'CFBundleShortVersionString': '4.3.0',
-        'CFBundleVersion': '4.3.0',
+        'CFBundleShortVersionString': '4.4.0',
+        'CFBundleVersion': '4.4.0',
         'NSHighResolutionCapable': True,
         'NSAppleEventsUsageDescription': (
             'ActivityLogger reads the active browser tab address when browser URL capture is enabled.'

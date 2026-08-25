@@ -66,3 +66,5 @@ Smoke-check that typing updates `logs/daily_log_*.md` within about 30 seconds.
 ## Data handling
 
 Logs are private plaintext retained indefinitely until the operator archives or deletes them. The Markdown compactor does not redact. Oversized sections pass through unchanged after a warning. Review and redact output before any external LLM use, prefer local processing, keep FileVault enabled, and do not add automatic deletion without an explicit product decision.
+
+Starting on local day 2026-08-27, `logs/daily_log_YYYY-MM-DD.md` is the strict v2 analysis log and the legacy writer is disabled. The legacy compactor rejects analysis-format files. Historical conversion skips declared analysis-format canonical days. Preserve all older daily logs, shadow logs, intent journals, and rollout evidence.

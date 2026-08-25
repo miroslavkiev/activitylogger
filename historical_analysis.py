@@ -18,7 +18,14 @@ from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
-from analysis_log import AnalysisRecord, _ensure_private_dir, parse_records, render_records
+from analysis_log import (
+    ANALYSIS_FORMAT_V1,
+    ANALYSIS_FORMAT_V2,
+    AnalysisRecord,
+    _ensure_private_dir,
+    parse_records,
+    render_records,
+)
 from clean_markdown_log import (
     Section,
     fence_open_spec,
@@ -343,6 +350,29 @@ def _source_day(path: Path) -> date:
     return date.fromisoformat(match.group(1))
 
 
+def _is_analysis_source(source: Path) -> bool:
+    """Return true when the source declares an analysis format."""
+    info = source.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+        raise OSError(f"refusing unsafe source: {source.name}")
+    source_bytes = source.read_bytes()
+    formats: list[bytes] = []
+    for line in source_bytes.splitlines():
+        if line.startswith(b"## "):
+            break
+        if line.startswith(b"> format: "):
+            formats.append(line.removeprefix(b"> format: "))
+    if not formats:
+        return False
+    known = {
+        ANALYSIS_FORMAT_V1.encode("ascii"),
+        ANALYSIS_FORMAT_V2.encode("ascii"),
+    }
+    if len(formats) != 1 or formats[0] not in known:
+        raise ValueError(f"unsupported analysis format: {source.name}")
+    return True
+
+
 def _conversion_header(
     day: date, source_digest: str, source_generator: str, zone: ZoneInfo
 ) -> str:
@@ -494,7 +524,11 @@ def convert_completed_logs(
     try:
         cutoff = today or datetime.now(zone).date()
         sources = sorted(log_dir.glob("daily_log_????-??-??.md"))
-        selected = [source for source in sources if _source_day(source) < cutoff]
+        selected = [
+            source
+            for source in sources
+            if _source_day(source) < cutoff and not _is_analysis_source(source)
+        ]
         expected_outputs = {
             f"historical_analysis_{_source_day(source).isoformat()}.md"
             for source in selected
