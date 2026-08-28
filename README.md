@@ -114,6 +114,16 @@ It writes `private_analysis_review/compact_analysis_YYYY-MM-DD.md` with private 
 
 The compact view is local plaintext restructuring. It does not redact payloads, call an LLM, or use the network. Manually review and redact it before any external use.
 
+For a smaller, task-focused v3 pilot, run:
+
+```bash
+.venv/bin/python scripts/export_workload_v3_pilot.py --day YYYY-MM-DD
+```
+
+It writes `private_analysis_review/v3_pilot_YYYY-MM-DD.md`. The exporter accepts only a completed canonical v2 day with a valid ready proof. It keeps typed text, clipboard, screen, URL, scroll, and generic event evidence exactly. It groups clicks by target within short work spans and summarizes focus, heartbeat, privacy, idle, and session markers. Hourly focus-context buckets keep passive reading and review work visible. The file includes source hashes, exact event accounting, and an explicit loss ledger.
+
+This pilot is intentionally lossy and is not a replacement for v2. It uses private atomic output outside `logs/`, does not match the daily-log upload filename, does not call an LLM, and does not use the network. V2 and its intent journal remain the only authority. Review at least three completed days before deciding if a later format should change live logging.
+
 The old compactor remains available for legacy logs:
 
 ```bash

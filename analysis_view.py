@@ -8,29 +8,63 @@ import os
 import re
 import stat
 import tempfile
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Sequence
 
 from analysis_log import (
+    ANALYSIS_ONLY_START_DAY,
     ANALYSIS_FORMAT_V2,
     TIMELINE_ROW_DECLARATION,
     AnalysisRecord,
     _ensure_private_dir,
     _intents_match_records,
+    _json_string,
     _records_digest,
+    _safe_json,
     analysis_paths,
     analysis_format_for_day,
     intent_path,
     parse_records,
+    ready_path,
     read_intents,
     render_records_v2,
+    validate_day_ready,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "private_analysis_review"
 COMPACT_FORMAT = "activitylogger-analysis-view-v1"
+WORKLOAD_FORMAT = "activitylogger-workload-summary-v3-pilot"
+WORKLOAD_GAP_SECONDS = 10 * 60
+WORKLOAD_KINDS = frozenset(
+    {"type", "click", "clipboard", "screen", "url", "scroll", "event"}
+)
+EXACT_WORKLOAD_KINDS = WORKLOAD_KINDS - {"click"}
+MARKER_KINDS = frozenset(
+    {
+        "focus",
+        "idle_start",
+        "idle_end",
+        "session_start",
+        "session_stop",
+        "privacy_pause_start",
+        "privacy_pause_end",
+        "heartbeat",
+    }
+)
+STATE_BOUNDARY_KINDS = frozenset(
+    {
+        "idle_start",
+        "idle_end",
+        "session_start",
+        "session_stop",
+        "privacy_pause_start",
+        "privacy_pause_end",
+    }
+)
 
 _DAY_RE = re.compile(r"^# Work Log - (?P<day>[0-9]{4}-[0-9]{2}-[0-9]{2})\n$")
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -51,8 +85,7 @@ _SCOPE_LINE = (
     "coverage=not-asserted\n"
 )
 _LEGACY_SCOPE_LINE = (
-    "> scope: derived-view; authority=analysis-v1-and-intent; "
-    "coverage=not-asserted\n"
+    "> scope: derived-view; authority=analysis-v1-and-intent; coverage=not-asserted\n"
 )
 
 
@@ -72,6 +105,29 @@ class ViewMetrics:
     timeline_events: int
     absolute_timeline_rows: int
     delta_timeline_rows: int
+
+
+@dataclass(frozen=True)
+class WorkloadViewMetrics:
+    day: str
+    analysis_file: str
+    intent_file: str
+    ready_file: str
+    output_file: str
+    analysis_sha256: str
+    intent_sha256: str
+    ready_sha256: str
+    output_sha256: str
+    analysis_bytes: int
+    output_bytes: int
+    byte_reduction: float
+    source_events: int
+    workload_events: int
+    exact_evidence_events: int
+    click_events: int
+    click_groups: int
+    summarized_markers: int
+    spans: int
 
 
 def _validate_provenance(name: str, digest: str) -> None:
@@ -252,13 +308,14 @@ def parse_compact_records(text: str) -> tuple[AnalysisRecord, ...]:
             day=day,
             expected_format=ANALYSIS_FORMAT_V2,
         )
-        if len(records) != expected_count or _records_digest(records) != expected_digest:
+        if (
+            len(records) != expected_count
+            or _records_digest(records) != expected_digest
+        ):
             raise ValueError("compact-view records do not match provenance")
         return records
     except (json.JSONDecodeError, OSError, UnicodeError, ValueError, TypeError) as exc:
-        raise ValueError(
-            f"invalid compact view [{type(exc).__name__}]"
-        ) from None
+        raise ValueError(f"invalid compact view [{type(exc).__name__}]") from None
 
 
 def compact_view_path(output_dir: Path, day: date) -> Path:
@@ -377,8 +434,7 @@ def export_compact_day(
         if parse_compact_records(output_bytes.decode("utf-8")) != records:
             raise ValueError("staged compact view failed round-trip verification")
         if (
-            hashlib.sha256(_stable_read(analysis_file)).hexdigest()
-            != analysis_digest
+            hashlib.sha256(_stable_read(analysis_file)).hexdigest() != analysis_digest
             or hashlib.sha256(_stable_read(intent_file)).hexdigest() != intent_digest
             or invalid_file.exists()
         ):
@@ -408,4 +464,572 @@ def export_compact_day(
         timeline_events=sum(record.trigger == "timeline" for record in records),
         absolute_timeline_rows=absolute_rows,
         delta_timeline_rows=delta_rows,
+    )
+
+
+def workload_view_path(output_dir: Path, day: date) -> Path:
+    return output_dir / f"v3_pilot_{day.isoformat()}.md"
+
+
+def _stamp(value: datetime) -> str:
+    return value.isoformat(timespec="seconds")
+
+
+def _short_stamp(value: datetime, day: date) -> str:
+    if value.date() != day:
+        return _stamp(value)
+    return value.strftime("%H:%M:%S%z")
+
+
+def _workload_string(value: str) -> str:
+    return _json_string(value).replace("\u2013", "\\u2013").replace("\u2014", "\\u2014")
+
+
+def _workload_spans(
+    records: Sequence[AnalysisRecord],
+) -> list[list[tuple[int, AnalysisRecord]]]:
+    spans: list[list[tuple[int, AnalysisRecord]]] = []
+    current: list[tuple[int, AnalysisRecord]] = []
+    state_boundary = False
+    for ordinal, record in enumerate(records, 1):
+        if record.kind not in WORKLOAD_KINDS:
+            state_boundary = state_boundary or record.kind in STATE_BOUNDARY_KINDS
+            continue
+        if current:
+            previous = current[-1][1]
+            gap = (record.captured_at - previous.captured_at).total_seconds()
+            if (
+                state_boundary
+                or record.heading != previous.heading
+                or gap < 0
+                or gap > WORKLOAD_GAP_SECONDS
+            ):
+                spans.append(current)
+                current = []
+        current.append((ordinal, record))
+        state_boundary = False
+    if current:
+        spans.append(current)
+    return spans
+
+
+def _interval_projection(
+    records: Sequence[AnalysisRecord], start_kind: str, end_kind: str
+) -> tuple[
+    dict[str, int | bool],
+    list[tuple[AnalysisRecord | None, AnalysisRecord | None]],
+]:
+    starts = 0
+    ends = 0
+    closed = 0
+    unmatched_starts = 0
+    unmatched_ends = 0
+    invalid_order = 0
+    total_seconds = 0
+    opened: AnalysisRecord | None = None
+    intervals: list[tuple[AnalysisRecord | None, AnalysisRecord | None]] = []
+    for record in records:
+        if record.kind == start_kind:
+            starts += 1
+            if opened is None:
+                opened = record
+            else:
+                unmatched_starts += 1
+                intervals.append((record, None))
+        elif record.kind == end_kind:
+            ends += 1
+            if opened is None:
+                unmatched_ends += 1
+                intervals.append((None, record))
+                continue
+            duration = int((record.captured_at - opened.captured_at).total_seconds())
+            if duration < 0:
+                invalid_order += 1
+            else:
+                total_seconds += duration
+                closed += 1
+            intervals.append((opened, record))
+            opened = None
+    if opened is not None:
+        intervals.append((opened, None))
+    return (
+        {
+            "starts": starts,
+            "ends": ends,
+            "closed": closed,
+            "open_at_end": opened is not None,
+            "unmatched_starts": unmatched_starts,
+            "unmatched_ends": unmatched_ends,
+            "invalid_order": invalid_order,
+            "closed_seconds": total_seconds,
+        },
+        intervals,
+    )
+
+
+def _marker_payload_groups(
+    records: Sequence[AnalysisRecord],
+) -> list[tuple[str, str, str, int, datetime, datetime]]:
+    groups: dict[tuple[str, str, str], list[int | datetime]] = {}
+    for record in records:
+        if record.kind not in MARKER_KINDS or not record.payload:
+            continue
+        key = (record.kind, record.trigger, record.payload)
+        group = groups.get(key)
+        if group is None:
+            groups[key] = [1, record.captured_at, record.captured_at]
+        else:
+            group[0] = int(group[0]) + 1
+            group[2] = record.captured_at
+    return [
+        (kind, trigger, payload, int(values[0]), values[1], values[2])
+        for (kind, trigger, payload), values in groups.items()
+    ]
+
+
+def _heartbeat_summary(
+    records: Sequence[AnalysisRecord],
+) -> dict[str, int | str | None]:
+    heartbeats = [
+        record.captured_at for record in records if record.kind == "heartbeat"
+    ]
+    positive_gaps = [
+        int((current - previous).total_seconds())
+        for previous, current in zip(heartbeats, heartbeats[1:])
+        if current >= previous
+    ]
+    return {
+        "count": len(heartbeats),
+        "first": _stamp(heartbeats[0]) if heartbeats else None,
+        "last": _stamp(heartbeats[-1]) if heartbeats else None,
+        "max_gap_seconds": max(positive_gaps, default=0),
+    }
+
+
+def _focus_buckets(
+    records: Sequence[AnalysisRecord],
+) -> list[tuple[datetime, str, int, datetime, datetime]]:
+    buckets: dict[tuple[datetime, str], list[int | datetime]] = {}
+    for record in records:
+        if record.kind != "focus":
+            continue
+        hour = record.captured_at.replace(minute=0, second=0, microsecond=0)
+        key = (hour, record.heading)
+        bucket = buckets.get(key)
+        if bucket is None:
+            buckets[key] = [1, record.captured_at, record.captured_at]
+        else:
+            bucket[0] = int(bucket[0]) + 1
+            bucket[2] = record.captured_at
+    return [
+        (hour, heading, int(values[0]), values[1], values[2])
+        for (hour, heading), values in buckets.items()
+    ]
+
+
+def _click_groups(
+    span: Sequence[tuple[int, AnalysisRecord]],
+) -> list[tuple[int, str, int, datetime, datetime]]:
+    projected: list[tuple[int, str, int, datetime, datetime]] = []
+    groups: dict[str, list[int | datetime]] = {}
+
+    def flush() -> None:
+        projected.extend(
+            (int(values[0]), payload, int(values[1]), values[2], values[3])
+            for payload, values in groups.items()
+        )
+        groups.clear()
+
+    for ordinal, record in span:
+        if record.kind != "click":
+            flush()
+            continue
+        group = groups.get(record.payload)
+        if group is None:
+            groups[record.payload] = [
+                ordinal,
+                1,
+                record.captured_at,
+                record.captured_at,
+            ]
+        else:
+            group[1] = int(group[1]) + 1
+            group[3] = record.captured_at
+    flush()
+    return projected
+
+
+def _click_dictionary(
+    grouped_spans: Sequence[Sequence[tuple[int, str, int, datetime, datetime]]],
+) -> dict[str, str]:
+    frequencies = Counter(
+        payload for groups in grouped_spans for _ordinal, payload, *_rest in groups
+    )
+    references: dict[str, str] = {}
+    for groups in grouped_spans:
+        for _ordinal, payload, *_rest in groups:
+            if payload in references:
+                continue
+            reference = f"C{len(references) + 1}"
+            encoded = _workload_string(payload)
+            before = frequencies[payload] * len(encoded.encode("utf-8"))
+            after = len(f"- {reference}: {encoded}\n".encode("utf-8")) + (
+                frequencies[payload] * len(reference)
+            )
+            if after < before:
+                references[payload] = reference
+    return references
+
+
+def _render_workload_summary(
+    records: Sequence[AnalysisRecord],
+    *,
+    day: date,
+    analysis_name: str,
+    analysis_sha256: str,
+    intent_name: str,
+    intent_sha256: str,
+    ready_name: str,
+    ready_sha256: str,
+) -> tuple[str, dict[str, int]]:
+    if not records or any(
+        record.section_captured_at.date() != day for record in records
+    ):
+        raise ValueError("workload summary requires one non-empty source day")
+    expected_names = (
+        f"daily_log_{day.isoformat()}.md",
+        f"analysis_intents_{day.isoformat()}.journal",
+        f".daily_log_{day.isoformat()}.ready.json",
+    )
+    if (analysis_name, intent_name, ready_name) != expected_names:
+        raise ValueError("workload-summary provenance does not match the day")
+    for digest in (analysis_sha256, intent_sha256, ready_sha256):
+        if not _SHA256_RE.fullmatch(digest):
+            raise ValueError("invalid workload-summary provenance")
+    unknown = {record.kind for record in records} - WORKLOAD_KINDS - MARKER_KINDS
+    if unknown:
+        raise ValueError("workload summary cannot account for every source event")
+
+    spans = _workload_spans(records)
+    grouped_spans = [_click_groups(span) for span in spans]
+    exact_records = tuple(
+        record for record in records if record.kind in EXACT_WORKLOAD_KINDS
+    )
+    source_counts = Counter(record.kind for record in records)
+    click_events = source_counts["click"]
+    marker_events = sum(source_counts[kind] for kind in MARKER_KINDS)
+    workload_events = sum(source_counts[kind] for kind in WORKLOAD_KINDS)
+    click_group_count = sum(len(groups) for groups in grouped_spans)
+    accounted = len(exact_records) + click_events + marker_events
+    if (
+        accounted != len(records)
+        or workload_events != len(exact_records) + click_events
+    ):
+        raise ValueError("workload summary event accounting failed")
+
+    contexts: dict[str, dict[str, int | datetime]] = {}
+    for span in spans:
+        heading = span[0][1].heading
+        context = contexts.setdefault(
+            heading,
+            {
+                "spans": 0,
+                "events": 0,
+                "clicks": 0,
+                "exact_evidence": 0,
+                "focus_events": 0,
+                "first": span[0][1].captured_at,
+                "last": span[-1][1].captured_at,
+            },
+        )
+        context["spans"] = int(context["spans"]) + 1
+        context["events"] = int(context["events"]) + len(span)
+        context["clicks"] = int(context["clicks"]) + sum(
+            record.kind == "click" for _ordinal, record in span
+        )
+        context["exact_evidence"] = int(context["exact_evidence"]) + sum(
+            record.kind in EXACT_WORKLOAD_KINDS for _ordinal, record in span
+        )
+        context["last"] = span[-1][1].captured_at
+
+    focus_records = tuple(record for record in records if record.kind == "focus")
+    focus_buckets = _focus_buckets(records)
+    for record in focus_records:
+        context = contexts.setdefault(
+            record.heading,
+            {
+                "spans": 0,
+                "events": 0,
+                "clicks": 0,
+                "exact_evidence": 0,
+                "focus_events": 0,
+                "first": record.captured_at,
+                "last": record.captured_at,
+            },
+        )
+        context["focus_events"] = int(context["focus_events"]) + 1
+        context["first"] = min(context["first"], record.captured_at)
+        context["last"] = max(context["last"], record.captured_at)
+
+    interval_projections = {
+        "privacy": _interval_projection(
+            records, "privacy_pause_start", "privacy_pause_end"
+        ),
+        "idle": _interval_projection(records, "idle_start", "idle_end"),
+        "session": _interval_projection(records, "session_start", "session_stop"),
+    }
+    marker_payload_records = tuple(
+        record for record in records if record.kind in MARKER_KINDS and record.payload
+    )
+    marker_payload_groups = _marker_payload_groups(records)
+    context_references = {
+        heading: f"H{index}" for index, heading in enumerate(contexts, 1)
+    }
+    click_references = _click_dictionary(grouped_spans)
+    lines = [
+        f"# Workload Summary - {day.isoformat()}\n\n",
+        f"> format: {WORKLOAD_FORMAT}\n",
+        "> scope: derived-lossy; authority=canonical-v2-and-intent\n",
+        f"> source-analysis: {_json_string(analysis_name)} sha256={analysis_sha256}\n",
+        f"> source-intent: {_json_string(intent_name)} sha256={intent_sha256}\n",
+        f"> source-ready: {_json_string(ready_name)} sha256={ready_sha256}\n",
+        f"> source-records: count={len(records)} sha256={_records_digest(records)}\n",
+        f"> span-policy: same workload heading; split at privacy, idle, session, or after {WORKLOAD_GAP_SECONDS} seconds\n",
+        "> evidence-policy: non-click workload evidence exact; clicks grouped by target per span\n",
+        "> caution: spans show observed activity, not exact effort duration\n\n",
+        "## Loss ledger\n\n",
+        f"- accounted-events: {accounted}/{len(records)}\n",
+        f"- source-counts: {_safe_json(dict(sorted(source_counts.items())), compact=True)}\n",
+        f"- exact-evidence: count={len(exact_records)} sha256={_records_digest(exact_records)}\n",
+        f"- clicks: records={click_events} groups={click_group_count}; omitted=intermediate-times-and-cross-target-order\n",
+        f"- dictionaries: contexts={len(context_references)} click-targets={len(click_references)}\n",
+        f"- summarized-markers: {marker_events}\n",
+        f"- focus-contexts: records={len(focus_records)} buckets={len(focus_buckets)} sha256={_records_digest(focus_records)}; omitted=intermediate-times-and-order-within-hour\n",
+        f"- marker-payloads: records={len(marker_payload_records)} groups={len(marker_payload_groups)} sha256={_records_digest(marker_payload_records)}; omitted=intermediate-times\n",
+        f"- omitted-source-fields: section-captured-at={len(records)} section-start={len(records)} per-record-click-and-marker-trigger-position={click_events + marker_events}\n\n",
+        "## Coverage and state\n\n",
+        f"- heartbeat: {_safe_json(_heartbeat_summary(records), compact=True)}\n",
+        f"- focus-events: {source_counts['focus']}\n",
+        f"- privacy: {_safe_json(interval_projections['privacy'][0], compact=True)}\n",
+        f"- idle: {_safe_json(interval_projections['idle'][0], compact=True)}\n",
+        f"- session: {_safe_json(interval_projections['session'][0], compact=True)}\n\n",
+        "## State intervals\n\n",
+    ]
+    for label in ("privacy", "idle", "session"):
+        for start, end in interval_projections[label][1]:
+            start_stamp = _short_stamp(start.captured_at, day) if start else "?"
+            end_stamp = _short_stamp(end.captured_at, day) if end else "open"
+            suffix = ""
+            if start is not None and start.payload:
+                suffix += f" start-payload={_workload_string(start.payload)}"
+            if end is not None and end.payload:
+                suffix += f" end-payload={_workload_string(end.payload)}"
+            lines.append(f"- {label} @{start_stamp}..{end_stamp}{suffix}\n")
+    lines.append("\n## Other marker payloads\n\n")
+    other_marker_groups = [
+        group for group in marker_payload_groups if group[0] not in STATE_BOUNDARY_KINDS
+    ]
+    if other_marker_groups:
+        for kind, trigger, payload, count, first_at, last_at in other_marker_groups:
+            lines.append(
+                f"- {kind}/{trigger} x{count} @{_short_stamp(first_at, day)}..{_short_stamp(last_at, day)} {_workload_string(payload)}\n"
+            )
+    else:
+        lines.append("- none\n")
+    lines.append("\n## Context dictionary\n\n")
+    for heading, reference in context_references.items():
+        lines.append(f"- {reference}: {_workload_string(heading)}\n")
+    lines.append("\n## Focus context timeline\n\n")
+    if focus_buckets:
+        for hour, heading, count, first_at, last_at in focus_buckets:
+            lines.append(
+                f"- @{_short_stamp(hour, day)} {context_references[heading]} x{count} first={_short_stamp(first_at, day)} last={_short_stamp(last_at, day)}\n"
+            )
+    else:
+        lines.append("- none\n")
+    lines.append("\n## Click target dictionary\n\n")
+    if click_references:
+        for payload, reference in click_references.items():
+            lines.append(f"- {reference}: {_workload_string(payload)}\n")
+    else:
+        lines.append("- none\n")
+    lines.append("\n## Context index\n\n")
+    for heading, context in contexts.items():
+        entry = {
+            "context": context_references[heading],
+            "spans": context["spans"],
+            "first": _short_stamp(context["first"], day),
+            "last": _short_stamp(context["last"], day),
+            "events": context["events"],
+            "clicks": context["clicks"],
+            "exact_evidence": context["exact_evidence"],
+            "focus_events": context["focus_events"],
+        }
+        lines.append(f"- {_safe_json(entry, compact=True)}\n")
+    lines.append("\n## Work spans\n\n")
+    for span_number, (span, click_groups) in enumerate(zip(spans, grouped_spans), 1):
+        first = span[0][1]
+        last = span[-1][1]
+        lines.append(
+            f"### {span_number} @{_short_stamp(first.captured_at, day)}..{_short_stamp(last.captured_at, day)} {context_references[first.heading]}\n"
+        )
+        entries: list[tuple[int, str]] = []
+        for ordinal, record in span:
+            if record.kind in EXACT_WORKLOAD_KINDS:
+                entries.append(
+                    (
+                        ordinal,
+                        f"- @{_short_stamp(record.captured_at, day)} {record.kind}/{record.trigger} {_workload_string(record.payload)}\n",
+                    )
+                )
+        for ordinal, payload, count, first_at, last_at in click_groups:
+            target = click_references.get(payload, _workload_string(payload))
+            times = _short_stamp(first_at, day)
+            if last_at != first_at:
+                times += f"..{_short_stamp(last_at, day)}"
+            entries.append(
+                (
+                    ordinal,
+                    f"- click {target} x{count} @{times}\n",
+                )
+            )
+        lines.extend(
+            text for _ordinal, text in sorted(entries, key=lambda item: item[0])
+        )
+        lines.append("\n")
+    text = "".join(lines)
+    return text, {
+        "workload_events": workload_events,
+        "exact_evidence_events": len(exact_records),
+        "click_events": click_events,
+        "click_groups": click_group_count,
+        "summarized_markers": marker_events,
+        "spans": len(spans),
+    }
+
+
+def render_workload_summary(
+    records: Sequence[AnalysisRecord],
+    *,
+    day: date,
+    analysis_name: str,
+    analysis_sha256: str,
+    intent_name: str,
+    intent_sha256: str,
+    ready_name: str,
+    ready_sha256: str,
+) -> str:
+    text, _metrics = _render_workload_summary(
+        records,
+        day=day,
+        analysis_name=analysis_name,
+        analysis_sha256=analysis_sha256,
+        intent_name=intent_name,
+        intent_sha256=intent_sha256,
+        ready_name=ready_name,
+        ready_sha256=ready_sha256,
+    )
+    return text
+
+
+def export_workload_day(
+    log_dir: Path,
+    output_dir: Path,
+    day: date,
+    *,
+    today: date | None = None,
+) -> WorkloadViewMetrics:
+    """Export one completed canonical v2 day to a private lossy workload view."""
+    cutoff = today or datetime.now().astimezone().date()
+    if day < ANALYSIS_ONLY_START_DAY or day >= cutoff:
+        raise ValueError("workload summary requires a completed canonical v2 day")
+    output_root = _prepare_output_dir(log_dir, output_dir)
+    analysis_file, invalid_file = analysis_paths(log_dir, day)
+    intent_file = intent_path(log_dir, day)
+    proof_file = ready_path(log_dir, day)
+    if invalid_file.exists() or not validate_day_ready(log_dir, day):
+        raise ValueError("workload-summary source is not ready")
+
+    analysis_bytes = _stable_read(analysis_file)
+    intent_bytes = _stable_read(intent_file)
+    ready_bytes = _stable_read(proof_file)
+    digests = tuple(
+        hashlib.sha256(data).hexdigest()
+        for data in (analysis_bytes, intent_bytes, ready_bytes)
+    )
+    try:
+        records = parse_records(
+            analysis_bytes.decode("utf-8"),
+            day=day,
+            expected_format=ANALYSIS_FORMAT_V2,
+        )
+        intents = read_intents(intent_file)
+    except (KeyError, OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise ValueError(
+            f"invalid workload-summary source [{type(exc).__name__}]"
+        ) from None
+    if not _intents_match_records(intents, records):
+        raise ValueError("workload-summary source does not match its intent stream")
+
+    text, metrics = _render_workload_summary(
+        records,
+        day=day,
+        analysis_name=analysis_file.name,
+        analysis_sha256=digests[0],
+        intent_name=intent_file.name,
+        intent_sha256=digests[1],
+        ready_name=proof_file.name,
+        ready_sha256=digests[2],
+    )
+    output = workload_view_path(output_root, day)
+    if output.exists() or output.is_symlink():
+        info = output.lstat()
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_mode & 0o077
+        ):
+            raise OSError("refusing unsafe workload-summary destination")
+    staged = _stage_private_text(output_root, output.name, text)
+    try:
+        output_bytes = _stable_read(staged)
+        if output_bytes != text.encode("utf-8"):
+            raise ValueError("staged workload summary differs from its projection")
+        if not validate_day_ready(log_dir, day):
+            raise OSError("workload-summary source changed before commit verification")
+        current = tuple(
+            hashlib.sha256(_stable_read(path)).hexdigest()
+            for path in (analysis_file, intent_file, proof_file)
+        )
+        if current != digests or invalid_file.exists():
+            raise OSError("workload-summary source changed before commit verification")
+        os.replace(staged, output)
+        _fsync_directory(output_root)
+    finally:
+        try:
+            staged.unlink()
+        except FileNotFoundError:
+            pass
+    return WorkloadViewMetrics(
+        day=day.isoformat(),
+        analysis_file=analysis_file.name,
+        intent_file=intent_file.name,
+        ready_file=proof_file.name,
+        output_file=output.name,
+        analysis_sha256=digests[0],
+        intent_sha256=digests[1],
+        ready_sha256=digests[2],
+        output_sha256=hashlib.sha256(output_bytes).hexdigest(),
+        analysis_bytes=len(analysis_bytes),
+        output_bytes=len(output_bytes),
+        byte_reduction=(
+            1.0 - (len(output_bytes) / len(analysis_bytes)) if analysis_bytes else 0.0
+        ),
+        source_events=len(records),
+        workload_events=metrics["workload_events"],
+        exact_evidence_events=metrics["exact_evidence_events"],
+        click_events=metrics["click_events"],
+        click_groups=metrics["click_groups"],
+        summarized_markers=metrics["summarized_markers"],
+        spans=metrics["spans"],
     )

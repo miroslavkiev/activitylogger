@@ -15,6 +15,7 @@ import analysis_log as al
 import analysis_view as av
 
 DAY = date(2026, 8, 22)
+WORKLOAD_DAY = date(2026, 8, 27)
 PLUS_TWO = timezone(timedelta(hours=2))
 
 
@@ -59,15 +60,18 @@ def _write_intent(
 ) -> None:
     records_digest = digest or al._records_digest(records)
     batch_id = records_digest[:24]
-    body = json.dumps(
-        {
-            "batch_id": batch_id,
-            "count": len(records),
-            "records_sha256": records_digest,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ) + "\n"
+    body = (
+        json.dumps(
+            {
+                "batch_id": batch_id,
+                "count": len(records),
+                "records_sha256": records_digest,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
     al.append_batch(
         al.intent_path(log_dir, day),
         header="# ActivityLogger analysis trial intents\n> version: test\n",
@@ -90,6 +94,17 @@ def _commit_day(
     al.commit_trial_batch(log_dir, day, records, "test", None)
     analysis_path, _invalid_path = al.shadow_paths(log_dir, day)
     return analysis_path, al.intent_path(log_dir, day)
+
+
+def _commit_ready_day(
+    log_dir: Path, records: tuple[al.AnalysisRecord, ...]
+) -> tuple[Path, Path, Path]:
+    log_dir.mkdir(mode=0o700, parents=True)
+    al.prepare_authoritative_transaction(log_dir, ((WORKLOAD_DAY, records),), "test")
+    al.commit_authoritative_transaction(log_dir)
+    proof = al.publish_day_ready(log_dir, WORKLOAD_DAY)
+    analysis, _invalid = al.analysis_paths(log_dir, WORKLOAD_DAY)
+    return analysis, al.intent_path(log_dir, WORKLOAD_DAY), proof
 
 
 def _compact_rows(text: str) -> list[str]:
@@ -265,16 +280,18 @@ def test_parser_and_export_errors_do_not_expose_hostile_payload(tmp_path):
         stream.write(f"BROKEN {secret}\n")
 
     with pytest.raises(Exception) as export_error:
-        av.export_compact_day(
-            log_dir, output_dir, DAY, today=DAY + timedelta(days=1)
-        )
+        av.export_compact_day(log_dir, output_dir, DAY, today=DAY + timedelta(days=1))
     assert secret not in str(export_error.value)
     assert not list(output_dir.glob("*.md")) if output_dir.exists() else True
 
     completed = subprocess.run(
         (
             sys.executable,
-            str(Path(__file__).resolve().parents[1] / "scripts" / "export_compact_analysis.py"),
+            str(
+                Path(__file__).resolve().parents[1]
+                / "scripts"
+                / "export_compact_analysis.py"
+            ),
             "--day",
             DAY.isoformat(),
             "--log-dir",
@@ -360,9 +377,7 @@ def test_export_rejects_unsafe_existing_destination(tmp_path):
     log_dir = tmp_path / "logs"
     output_dir = tmp_path / "private_review"
     _commit_day(log_dir, records)
-    av.export_compact_day(
-        log_dir, output_dir, DAY, today=DAY + timedelta(days=1)
-    )
+    av.export_compact_day(log_dir, output_dir, DAY, today=DAY + timedelta(days=1))
     output = next(output_dir.glob("*.md"))
     target = tmp_path / "unrelated-private-file"
     target.write_text("do not replace\n", encoding="utf-8")
@@ -370,9 +385,7 @@ def test_export_rejects_unsafe_existing_destination(tmp_path):
     output.symlink_to(target)
 
     with pytest.raises(Exception, match="unsafe|destination"):
-        av.export_compact_day(
-            log_dir, output_dir, DAY, today=DAY + timedelta(days=1)
-        )
+        av.export_compact_day(log_dir, output_dir, DAY, today=DAY + timedelta(days=1))
 
     assert output.is_symlink()
     assert target.read_text(encoding="utf-8") == "do not replace\n"
@@ -381,9 +394,7 @@ def test_export_rejects_unsafe_existing_destination(tmp_path):
     output.write_text("weak permissions\n", encoding="utf-8")
     output.chmod(0o644)
     with pytest.raises(Exception, match="unsafe|destination"):
-        av.export_compact_day(
-            log_dir, output_dir, DAY, today=DAY + timedelta(days=1)
-        )
+        av.export_compact_day(log_dir, output_dir, DAY, today=DAY + timedelta(days=1))
     assert output.read_text(encoding="utf-8") == "weak permissions\n"
 
 
@@ -408,9 +419,7 @@ def test_export_rejects_source_change_before_atomic_commit(tmp_path, monkeypatch
     monkeypatch.setattr(av, "_stable_read", change_after_snapshot)
 
     with pytest.raises(Exception, match="changed"):
-        av.export_compact_day(
-            log_dir, output_dir, DAY, today=DAY + timedelta(days=1)
-        )
+        av.export_compact_day(log_dir, output_dir, DAY, today=DAY + timedelta(days=1))
 
     assert changed
     assert not list(output_dir.glob("*.md"))
@@ -436,9 +445,7 @@ def test_export_is_private_deterministic_and_does_not_change_sources(tmp_path):
         intent_path: hashlib.sha256(intent_path.read_bytes()).hexdigest(),
     }
 
-    av.export_compact_day(
-        log_dir, output_dir, DAY, today=DAY + timedelta(days=1)
-    )
+    av.export_compact_day(log_dir, output_dir, DAY, today=DAY + timedelta(days=1))
     outputs = list(output_dir.glob("*.md"))
     assert len(outputs) == 1
     output = outputs[0]
@@ -447,10 +454,139 @@ def test_export_is_private_deterministic_and_does_not_change_sources(tmp_path):
     assert output.stat().st_mode & 0o777 == 0o600
     assert av.parse_compact_records(first_bytes.decode("utf-8")) == records
 
-    av.export_compact_day(
-        log_dir, output_dir, DAY, today=DAY + timedelta(days=1)
-    )
+    av.export_compact_day(log_dir, output_dir, DAY, today=DAY + timedelta(days=1))
     assert output.read_bytes() == first_bytes
     assert {
         path: hashlib.sha256(path.read_bytes()).hexdigest() for path in source_hashes
     } == source_hashes
+
+
+def test_v3_pilot_groups_clicks_preserves_evidence_and_stays_private(
+    tmp_path, monkeypatch
+):
+    start = datetime(2026, 8, 27, 10, tzinfo=PLUS_TWO)
+    records = (
+        _record("heartbeat", start, section_at=start),
+        _record("focus", start + timedelta(seconds=1), payload="changed"),
+        _record(
+            "click",
+            start + timedelta(seconds=2),
+            payload="Save",
+            trigger="click",
+        ),
+        _record(
+            "type",
+            start + timedelta(seconds=3),
+            payload="exact task evidence",
+            trigger="typing_pause",
+        ),
+        _record(
+            "click",
+            start + timedelta(seconds=4),
+            payload="Save",
+            trigger="click",
+        ),
+        _record(
+            "click",
+            start + timedelta(seconds=5),
+            payload="Save",
+            trigger="click",
+        ),
+        _record("privacy_pause_start", start + timedelta(seconds=6)),
+        _record("privacy_pause_end", start + timedelta(seconds=16)),
+        _record(
+            "clipboard",
+            start + timedelta(minutes=11),
+            payload="exact clipboard evidence \u2013 \u2014",
+            heading="Editor - Other task",
+        ),
+        _record(
+            "focus",
+            start + timedelta(minutes=11, seconds=30),
+            payload="changed",
+            heading="Reader - Reference",
+        ),
+        _record("idle_start", start + timedelta(minutes=12)),
+    )
+    log_dir = tmp_path / "logs"
+    output_dir = tmp_path / "private_review"
+    sources = _commit_ready_day(log_dir, records)
+    source_hashes = {
+        path: hashlib.sha256(path.read_bytes()).hexdigest() for path in sources
+    }
+
+    result = av.export_workload_day(
+        log_dir,
+        output_dir,
+        WORKLOAD_DAY,
+        today=WORKLOAD_DAY + timedelta(days=1),
+    )
+    output = output_dir / result.output_file
+    text = output.read_text(encoding="utf-8")
+
+    assert result.source_events == len(records)
+    assert result.click_events == 3
+    assert result.click_groups == 2
+    assert result.exact_evidence_events == 2
+    assert result.summarized_markers == 6
+    assert result.spans == 2
+    assert f"accounted-events: {len(records)}/{len(records)}" in text
+    assert '- click "Save" x1 @' in text
+    assert '- click "Save" x2 @' in text
+    assert "exact task evidence" in text
+    assert text.index('- click "Save" x1 @') < text.index("exact task evidence")
+    assert text.index("exact task evidence") < text.index('- click "Save" x2 @')
+    assert "exact clipboard evidence" in text
+    assert "focus/timeline x2 @" in text
+    assert '"changed"' in text
+    assert "privacy @10:00:06+0200..10:00:16+0200" in text
+    assert "Reader - Reference" in text
+    assert "## Focus context timeline" in text
+    assert text.count('"focus_events":1') >= 2
+    assert "\u2013" not in text
+    assert "\u2014" not in text
+    assert "\\u2013" in text
+    assert "\\u2014" in text
+    assert '"open_at_end":true' in text
+    assert output_dir.stat().st_mode & 0o777 == 0o700
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert output.parent != log_dir
+    assert not output.name.startswith("daily_log_")
+
+    first = output.read_bytes()
+    av.export_workload_day(
+        log_dir,
+        output_dir,
+        WORKLOAD_DAY,
+        today=WORKLOAD_DAY + timedelta(days=1),
+    )
+    assert output.read_bytes() == first
+    assert {
+        path: hashlib.sha256(path.read_bytes()).hexdigest() for path in sources
+    } == source_hashes
+
+    with pytest.raises(ValueError, match="completed"):
+        av.export_workload_day(log_dir, output_dir, WORKLOAD_DAY, today=WORKLOAD_DAY)
+
+    real_validate = av.validate_day_ready
+    validation_calls = 0
+
+    def mutate_before_final_fence(path: Path, day: date) -> bool:
+        nonlocal validation_calls
+        validation_calls += 1
+        if validation_calls == 2:
+            with sources[0].open("ab") as stream:
+                stream.write(b"\n")
+            return True
+        return real_validate(path, day)
+
+    monkeypatch.setattr(av, "validate_day_ready", mutate_before_final_fence)
+    with pytest.raises(OSError, match="changed") as error:
+        av.export_workload_day(
+            log_dir,
+            output_dir,
+            WORKLOAD_DAY,
+            today=WORKLOAD_DAY + timedelta(days=1),
+        )
+    assert "exact task evidence" not in str(error.value)
+    assert output.read_bytes() == first
