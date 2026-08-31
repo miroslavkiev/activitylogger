@@ -16,6 +16,7 @@
 | Signed bundle mechanics | Complete | Pinned nested and outer signatures, exact requirement, entitlement and load containment, staged promotion, and tamper rejection passed. Hardened Runtime is intentionally not enabled for the retained local leaf. |
 | Launch Agent lifecycle | Complete | Private canonical plist, bootout/quiesce, bootstrap, rollback or bounded config recovery, and fresh stable exact-PID proof. |
 | Live runtime launch | Complete | Final exact native process remained stable and a real post-restart typing smoke updated the daily log. |
+| Review Center | Complete in source | Native payload-free health, freshness, storage, privacy controls, fixed 5-day or 7-day review packs, and manual outcomes. Live verification follows the 4.5.0 rebuild. |
 
 ## Verification
 

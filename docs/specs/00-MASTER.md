@@ -45,6 +45,15 @@ On a pause edge, in-flight keys, modifiers, scroll state, click reservations, an
 | Capture trigger annotations | off | When enabled, sealed sections receive one closed-set trigger token. |
 | Scroll coalescing | off | One bounded burst becomes one event after the exact quiet deadline. It seals a section even when annotations are off. |
 
+## Local review and operator controls
+
+- The native Review Center stays hidden during Launch Agent startup and opens when the running app is opened again.
+- Its status view is payload-free. It shows health, last safe write freshness, privacy pause state, fixed-window weekly readiness, and private storage totals.
+- Manual pause uses the same fail-closed capture gate as secure apps and secure fields. Resume clears only the manual pause. The state is private, durable, and restored after restart.
+- A weekly pack accepts only an exact completed 5-day or 7-day v2 window with valid ready proofs. It never fills a missing day with an older day.
+- Weekly output is private and atomic. `INDEX.json` is the completion marker and is published last after source hashes are checked again.
+- Review outcomes are explicit local operator notes. The logger does not infer or send them.
+
 Unsafe full-URL mode and remote ActivityWatch access emit startup warnings. Browser URL capture never requires Screen Recording.
 
 ## Config and resource limits

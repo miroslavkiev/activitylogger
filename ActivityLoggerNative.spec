@@ -6,7 +6,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=['analysis_log', 'browser_url', 'window_titles', 'config', 'scroll_coalesce', 'markdown_format', 'Quartz'],
+    hiddenimports=['analysis_log', 'browser_url', 'window_titles', 'config', 'scroll_coalesce', 'markdown_format', 'review_center', 'Quartz'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -50,9 +50,11 @@ app = BUNDLE(
     icon='assets/ActivityLogger.icns',
     bundle_identifier='com.mk.activitylogger.native',
     info_plist={
-        'CFBundleShortVersionString': '4.4.0',
-        'CFBundleVersion': '4.4.0',
+        'CFBundleShortVersionString': '4.5.0',
+        'CFBundleVersion': '4.5.0',
         'NSHighResolutionCapable': True,
+        'LSBackgroundOnly': False,
+        'LSUIElement': True,
         'NSAppleEventsUsageDescription': (
             'ActivityLogger reads the active browser tab address when browser URL capture is enabled.'
         ),

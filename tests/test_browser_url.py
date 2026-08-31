@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import analysis_log as al
 import browser_url as bu
 import interleaved_logger as il
 from config import default_config, load_config
@@ -352,11 +353,13 @@ def test_url_event_lands_under_current_heading(tmp_path: Path):
     il.flush_to_file()
     text = (tmp_path / "logs" / Path(il._get_filepath()).name).read_text(encoding="utf-8")
     assert f"## {heading}" in text
-    assert "> [URL]: https://example.com/path" in text
+    records = al.parse_records(text)
+    assert [(record.kind, record.payload) for record in records] == [
+        ("url", "https://example.com/path")
+    ]
     heading_idx = text.index(f"## {heading}")
-    url_idx = text.index("> [URL]: https://example.com/path")
+    url_idx = text.index('- url: "https://example.com/path"')
     assert heading_idx < url_idx
-    assert url_idx < text.index("---", heading_idx)
 
 
 def test_title_and_url_same_cycle_url_under_new_heading(tmp_path: Path):
@@ -373,7 +376,7 @@ def test_title_and_url_same_cycle_url_under_new_heading(tmp_path: Path):
     new_heading = build_heading_body("Google Chrome", "New Title")
     assert new_heading is not None
     assert f"## {new_heading}" in text
-    url_idx = text.index("> [URL]: https://new.example/")
+    url_idx = text.index('- url: "https://new.example/"')
     heading_idx = text.index(f"## {new_heading}")
     assert heading_idx < url_idx
 
@@ -400,8 +403,11 @@ def test_f4_alone_does_not_write_trigger_metadata(tmp_path: Path):
     il.record_browser_url_observation("https://example.com/")
     il.flush_to_file()
     text = (tmp_path / "logs" / Path(il._get_filepath()).name).read_text(encoding="utf-8")
-    assert "> [URL]: https://example.com/" in text
-    assert "trigger:" not in text
+    records = al.parse_records(text)
+    assert [(record.kind, record.payload) for record in records] == [
+        ("url", "https://example.com/")
+    ]
+    assert records[0].trigger == "file_flush"
 
 
 def test_f4_with_f5_seals_url_change(tmp_path: Path):

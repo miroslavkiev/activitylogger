@@ -2,7 +2,7 @@
 
 ActivityLogger records active windows, keystrokes, clicks, Accessibility text, optional browser URLs, and clipboard changes into private daily Markdown logs for local analysis.
 
-**Version:** 4.4.0 | **Runtime:** `dist/ActivityLoggerNative.app` | **Operations:** [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md)
+**Version:** 4.5.0 | **Runtime:** `dist/ActivityLoggerNative.app` | **Operations:** [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md)
 
 ## Safety model
 
@@ -83,6 +83,29 @@ Use `./scripts/rebuild_and_restart.sh` after source changes.
 ## Logs and compaction
 
 Daily logs live at `logs/daily_log_YYYY-MM-DD.md` in a mode `700` directory with mode `600` files. Starting on 2026-08-27 in Europe/Zagreb, this canonical file uses `activitylogger-analysis-v2` as the only live Markdown format. The fixed local-day boundary prevents one daily file from mixing formats. Older daily logs and the completed comparison data under `logs/analysis_shadow/` stay unchanged.
+
+## Review Center and operator controls
+
+Open `dist/ActivityLoggerNative.app` in Finder while the logger is running to show the native Review Center. It stays hidden during normal background startup. The window shows only payload-free health, freshness, weekly readiness, storage totals, and privacy state. It never shows captured text.
+
+The Review Center can pause or resume capture, prepare an exact 5-day or 7-day private weekly pack, and record a local review outcome. Resume clears only the manual pause. A secure app or secure field can still keep capture paused. Manual pause survives a restart and fails closed if its state cannot be read.
+
+The same controls are available from the local command line:
+
+```bash
+.venv/bin/python scripts/activityloggerctl.py health
+.venv/bin/python scripts/activityloggerctl.py storage
+.venv/bin/python scripts/activityloggerctl.py pause
+.venv/bin/python scripts/activityloggerctl.py resume
+```
+
+To prepare a fixed completed calendar window without opening the Review Center:
+
+```bash
+.venv/bin/python scripts/export_weekly_review.py --end YYYY-MM-DD --days 5
+```
+
+Use `--days 7` for a 7-day window. Every selected day must be complete, use the canonical v2 format, and have a valid ready proof. Older days are never substituted for missing days. The Review Center and these new operator commands write packs atomically under `~/Library/Application Support/ActivityLogger/private_analysis_review/` with private permissions. Each pack includes v3 workload summaries, coverage limits, hashes, an index, and a safe review prompt. The summaries still contain private captured text. Review and redact them before any external use.
 
 V2 keeps the exact event records and intent digests while reducing timeline overhead. It uses stable event names, one context heading per change, reversible adjacent-repeat counts, focus and idle transitions, session markers, and hourly continuity markers. Local Python code generates it. It does not call an LLM or a network service.
 

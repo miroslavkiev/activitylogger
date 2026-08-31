@@ -313,7 +313,7 @@ def test_T_F6_11b_file_flush_does_not_drop_open_burst(tmp_path: Path):
     text = log.read_text(encoding="utf-8")
     assert "7 ticks" in text
     assert "Scroll" in text
-    assert "trigger:scroll_coalesce" in text
+    assert "scroll_coalesce" in text
 
 
 # --- T-F6-12 ---

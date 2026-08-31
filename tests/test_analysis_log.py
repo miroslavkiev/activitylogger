@@ -389,6 +389,7 @@ def test_shadow_failure_does_not_fail_authoritative_legacy_write(
     tmp_path, monkeypatch, reset_logger_state
 ):
     reset_logger_state()
+    monkeypatch.setattr(il, "_analysis_only_day", lambda _day: False)
     monkeypatch.setattr(il, "ANALYSIS_SHADOW_ENABLED", True)
     monkeypatch.setattr(
         il, "commit_trial_batch", lambda *args: (_ for _ in ()).throw(OSError())
@@ -404,6 +405,7 @@ def test_trial_intent_precedes_legacy_and_analysis(
     monkeypatch, reset_logger_state
 ):
     reset_logger_state()
+    monkeypatch.setattr(il, "_analysis_only_day", lambda _day: False)
     order: list[str] = []
     monkeypatch.setattr(
         il,
@@ -426,6 +428,7 @@ def test_focus_and_idle_transitions_are_shadow_only(
     tmp_path, monkeypatch, reset_logger_state
 ):
     reset_logger_state()
+    monkeypatch.setattr(il, "_analysis_only_day", lambda _day: False)
     monkeypatch.setattr(il, "_analysis_runtime_enabled", True)
     monkeypatch.setattr(il, "SYSTEM_IDLE_AVAILABLE", True)
     il.apply_heading_change("Editor - Report")
@@ -479,6 +482,7 @@ def test_timeline_marker_order_does_not_split_legacy_section(
     tmp_path, monkeypatch, reset_logger_state
 ):
     reset_logger_state()
+    monkeypatch.setattr(il, "_analysis_only_day", lambda _day: False)
     monkeypatch.setattr(il, "_analysis_runtime_enabled", True)
     with il._lock:
         il._add_event_locked(al.CapturedEvent("first", kind="type", payload="first"))

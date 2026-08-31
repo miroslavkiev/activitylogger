@@ -119,6 +119,34 @@ def test_default_private_output_directory_is_ignored():
     assert f"{av.DEFAULT_OUTPUT_DIR.name}/" in ignored
 
 
+def test_frozen_default_output_directory_is_outside_the_app_bundle(
+    tmp_path,
+    monkeypatch,
+):
+    bundle_root = tmp_path / "ActivityLoggerNative.app" / "Contents" / "Resources"
+    monkeypatch.setattr(av, "PROJECT_ROOT", bundle_root)
+    monkeypatch.setattr(av.sys, "frozen", True, raising=False)
+
+    output = av.default_output_dir(home=tmp_path / "operator")
+
+    assert output == (
+        tmp_path
+        / "operator"
+        / "Library"
+        / "Application Support"
+        / "ActivityLogger"
+        / "private_analysis_review"
+    )
+    assert bundle_root not in output.parents
+
+
+def test_operator_clis_share_the_bundled_review_center_default():
+    from scripts import activityloggerctl, export_weekly_review
+
+    assert activityloggerctl.DEFAULT_OUTPUT_DIR == av.USER_PRIVATE_OUTPUT_DIR
+    assert export_weekly_review.DEFAULT_OUTPUT_DIR == av.USER_PRIVATE_OUTPUT_DIR
+
+
 def test_compact_view_round_trip_preserves_every_record_field_and_digest():
     start = datetime(2026, 8, 22, 10, tzinfo=PLUS_TWO)
     hostile = "  exact\n## not a heading\n@+1 not-a-row\n\u0085\u2028\u2029  "

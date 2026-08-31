@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import queue
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -119,7 +120,14 @@ def test_flush_restore_on_body_write_failure(tmp_path, monkeypatch):
     # Pretend file exists so header path is skipped
     (tmp_path / "daily_log_test.md").write_text("# existing\n", encoding="utf-8")
 
-    batch = [{"heading": "App \u2014 Win", "events": ["typed"], "timestamp": "12:00:00"}]
+    batch = [
+        {
+            "heading": "App \u2014 Win",
+            "events": ["typed"],
+            "timestamp": "12:00:00",
+            "captured_at": datetime(2026, 8, 26, 12, tzinfo=timezone.utc),
+        }
+    ]
     with il._lock:
         il.rebind_capture_buffers()
         il._sections.clear()

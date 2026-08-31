@@ -68,7 +68,7 @@ def test_T_F5_05_periodic_flush_seals_with_file_flush(tmp_path: Path):
     il.flush_to_file()
     log = next((tmp_path / "logs").glob("daily_log_*.md"))
     text = log.read_text(encoding="utf-8")
-    assert "trigger:file_flush" in text
+    assert "file_flush" in text
     assert "hello" in text
 
 
@@ -202,6 +202,7 @@ def test_T_F5_13_file_output_round_trip(tmp_path: Path):
                 "events": ["hello world"],
                 "timestamp": "14:02:40",
                 "trigger": "file_flush",
+                "_trigger": "file_flush",
             }
         )
     il.flush_to_file()
@@ -209,9 +210,8 @@ def test_T_F5_13_file_output_round_trip(tmp_path: Path):
         encoding="utf-8"
     )
     assert "## Safari \u2014 Example\n" in text
-    assert "*14:02:40 · trigger:file_flush*" in text
+    assert "file_flush" in text
     assert "hello world" in text
-    assert "---" in text
 
 
 def test_T_F5_14_sibling_name_reservation(tmp_path: Path):
@@ -261,7 +261,8 @@ def test_T_F5_15_gemini_prompt_mentions_triggers():
 # --- Flag OFF ---
 
 
-def test_T_F5_16_flag_off_writes_legacy_timestamp(tmp_path: Path):
+def test_T_F5_16_flag_off_writes_legacy_timestamp(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(il, "_analysis_only_day", lambda _day: False)
     assert il.CAPTURE_TRIGGERS_ENABLED is False
     with il._lock:
         il._current_heading = "App \u2014 Window"

@@ -104,6 +104,23 @@ An unchanged pinned leaf should preserve the code requirement across rebuilds. T
 
 Base capture does not require Screen Recording. Browser URL capture is off by default. When enabled, a browser may trigger a native Automation prompt for Apple Events. Approve only the browsers the operator intends to capture.
 
+## Review Center and manual privacy control
+
+The signed app is a menu-bar style background app without a Dock icon. Normal Launch Agent startup keeps its Review Center hidden. Open `dist/ActivityLoggerNative.app` in Finder while it is already running to show the window.
+
+The Review Center uses the same local control functions as these commands:
+
+```bash
+.venv/bin/python scripts/activityloggerctl.py health
+.venv/bin/python scripts/activityloggerctl.py storage
+.venv/bin/python scripts/activityloggerctl.py pause
+.venv/bin/python scripts/activityloggerctl.py resume
+```
+
+Pause stops every capture channel through the shared privacy gate. Resume clears only the manual pause and never clears a secure-app or secure-field pause. A paused clipboard change is consumed and is not written later. The manual state is stored with private permissions and survives a restart. An unreadable existing state keeps capture paused.
+
+The Review Center and command output do not show captured payloads. Weekly packs are stored under `~/Library/Application Support/ActivityLogger/private_analysis_review/`. They are private plaintext and may contain captured text. Review and redact them before any external use.
+
 ## Config trust and privacy defaults
 
 Create the optional config with private permissions:

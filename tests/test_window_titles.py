@@ -183,13 +183,12 @@ def test_fallback_heading_has_no_aw_instruction():
 
 def test_markdown_section_line_format(tmp_path, monkeypatch):
     monkeypatch.setattr(il, "LOG_DIR", tmp_path)
-    monkeypatch.setattr(il, "_get_filepath", lambda *_args: tmp_path / "daily_log_test.md")
     with patch.object(il, "refresh_secure_field_focus", return_value=False):
         assert il.apply_resolved_window("Safari", "Example") is True
     with il._lock:
         il._current_events.append("typed hello")
     il.flush_to_file()
-    text = (tmp_path / "daily_log_test.md").read_text(encoding="utf-8")
+    text = next(tmp_path.glob("daily_log_*.md")).read_text(encoding="utf-8")
     assert "## Safari \u2014 Example" in text
     assert "typed hello" in text
 

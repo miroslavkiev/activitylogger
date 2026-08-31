@@ -928,11 +928,11 @@ def _read_private_file(
             not stat.S_ISREG(info.st_mode)
             or info.st_uid != os.getuid()
             or info.st_nlink != 1
+            or info.st_mode & 0o077
         ):
             raise OSError("refusing unsafe analysis file")
         if max_bytes is not None and info.st_size > max_bytes:
             raise OSError("private analysis file exceeds its size limit")
-        os.fchmod(fd, 0o600)
         chunks: list[bytes] = []
         total = 0
         while True:
@@ -1392,7 +1392,16 @@ def authoritative_transaction_pending(log_dir: Path) -> bool:
 
 def _pending_temp_paths(log_dir: Path) -> tuple[Path, ...]:
     pending = _pending_transaction_path(log_dir)
-    _ensure_private_dir(pending.parent)
+    try:
+        info = pending.parent.lstat()
+    except FileNotFoundError:
+        return ()
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o077
+    ):
+        raise OSError("refusing unsafe pending transaction directory")
     prefix = f".{pending.name}."
     return tuple(
         sorted(

@@ -9,6 +9,8 @@ import pytest
 import analysis_log as al
 import interleaved_logger as il
 
+LEGACY_AT = datetime(2026, 8, 26, 12, tzinfo=timezone.utc)
+
 
 @pytest.fixture(autouse=True)
 def _reset(reset_logger_state):
@@ -27,7 +29,7 @@ def _section(label: str, captured_at: datetime) -> dict:
 
 def test_flush_restores_in_place_after_path_failure(monkeypatch):
     identity = il._sections
-    il._sections.append(_section("kept", datetime.now(timezone.utc)))
+    il._sections.append(_section("kept", LEGACY_AT))
     monkeypatch.setattr(il, "_get_filepath", lambda *args: (_ for _ in ()).throw(OSError("disk")))
     assert il.flush_to_file() is False
     assert il._sections is identity
@@ -35,7 +37,7 @@ def test_flush_restores_in_place_after_path_failure(monkeypatch):
 
 
 def test_flush_keeps_sections_until_trial_guard_is_durable(monkeypatch):
-    pending = _section("kept", datetime.now(timezone.utc))
+    pending = _section("kept", LEGACY_AT)
     il._sections.append(pending)
 
     def fail_intent(*args):
@@ -136,11 +138,11 @@ def test_concurrent_flushes_are_serialized(monkeypatch):
         return True
 
     monkeypatch.setattr(il, "_write_section_group", write_group)
-    il._sections.append(_section("one", datetime.now(timezone.utc)))
+    il._sections.append(_section("one", LEGACY_AT))
     first = threading.Thread(target=il.flush_to_file)
     first.start()
     assert entered.wait(1)
-    il._sections.append(_section("two", datetime.now(timezone.utc)))
+    il._sections.append(_section("two", LEGACY_AT))
     second = threading.Thread(target=il.flush_to_file)
     second.start()
     release.set()
@@ -152,7 +154,7 @@ def test_concurrent_flushes_are_serialized(monkeypatch):
 
 def test_restore_bounds_failed_buffer_to_newest_sections(monkeypatch):
     monkeypatch.setattr(il, "MAX_SECTIONS", 2)
-    now = datetime.now(timezone.utc)
+    now = LEGACY_AT
     il._sections.extend([_section(str(i), now) for i in range(4)])
     monkeypatch.setattr(il, "_write_section_group", lambda *args: False)
     assert il.flush_to_file() is False
@@ -212,7 +214,7 @@ def test_pending_click_is_never_persisted(tmp_path):
 
 
 def test_unresolved_click_blocks_all_later_sections(monkeypatch):
-    now = datetime.now(timezone.utc)
+    now = LEGACY_AT
     before = _section("before", now)
     pending = _section("", now)
     pending.update(
@@ -241,7 +243,7 @@ def test_unresolved_click_blocks_all_later_sections(monkeypatch):
 
 
 def test_pending_click_expiry_unblocks_later_sections(monkeypatch):
-    now = datetime.now(timezone.utc)
+    now = LEGACY_AT
     pending = _section("", now)
     pending.update(
         {

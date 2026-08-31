@@ -46,6 +46,8 @@ def clear_logger_runtime() -> None:
         il._last_emitted_url = None
         il._pause_secure_app = False
         il._pause_secure_field = False
+        il._pause_manual = False
+        il._pause_review_center = False
         il._is_paused = False
         il._current_modifiers.clear()
         il._physical_modifiers.clear()
@@ -55,6 +57,8 @@ def clear_logger_runtime() -> None:
         il._secure_field_cache_at = 0.0
         il._secure_field_generation = 0
         il._privacy_generation = 0
+        il._manual_control_revision = 0
+        il._manual_control_pending = None
         il._window_bucket = None
         il._scan_pending = False
         il._last_key_activity_mono = None
@@ -78,6 +82,7 @@ def clear_logger_runtime() -> None:
     il._scroll_deadline_changed.clear()
     il._writer_wakeup.clear()
     il._fatal_worker_event.clear()
+    il._manual_state_dirty.clear()
     il._state.reset_runtime_controls()
     # Unit tests exercise key encoding without a live NSWorkspace frontmost app.
     il._state.last_secure_app_pid = 0

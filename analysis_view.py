@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import pwd
 import re
 import stat
+import sys
 import tempfile
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Sequence
 
@@ -35,7 +37,34 @@ from analysis_log import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "private_analysis_review"
+
+
+def user_private_output_dir(*, home: Path | None = None) -> Path:
+    """Return the stable per-user private review path."""
+    user_home = home or Path(pwd.getpwuid(os.getuid()).pw_dir)
+    return (
+        user_home
+        / "Library"
+        / "Application Support"
+        / "ActivityLogger"
+        / "private_analysis_review"
+    )
+
+
+def default_output_dir(
+    *,
+    frozen: bool | None = None,
+    home: Path | None = None,
+) -> Path:
+    """Return a stable private review path for source and bundled runs."""
+    is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+    if is_frozen:
+        return user_private_output_dir(home=home)
+    return PROJECT_ROOT / "private_analysis_review"
+
+
+DEFAULT_OUTPUT_DIR = default_output_dir()
+USER_PRIVATE_OUTPUT_DIR = user_private_output_dir()
 COMPACT_FORMAT = "activitylogger-analysis-view-v1"
 WORKLOAD_FORMAT = "activitylogger-workload-summary-v3-pilot"
 WORKLOAD_GAP_SECONDS = 10 * 60
@@ -128,6 +157,10 @@ class WorkloadViewMetrics:
     click_groups: int
     summarized_markers: int
     spans: int
+    heartbeat_count: int
+    heartbeat_first: str | None
+    heartbeat_last: str | None
+    max_heartbeat_gap_seconds: int
 
 
 def _validate_provenance(name: str, digest: str) -> None:
@@ -590,19 +623,37 @@ def _marker_payload_groups(
 def _heartbeat_summary(
     records: Sequence[AnalysisRecord],
 ) -> dict[str, int | str | None]:
-    heartbeats = [
+    heartbeats = sorted(
         record.captured_at for record in records if record.kind == "heartbeat"
-    ]
-    positive_gaps = [
+    )
+    gaps = [
         int((current - previous).total_seconds())
         for previous, current in zip(heartbeats, heartbeats[1:])
         if current >= previous
     ]
+    if heartbeats:
+        day = records[0].section_captured_at.date()
+        day_start = datetime.combine(
+            day,
+            datetime.min.time(),
+            tzinfo=heartbeats[0].tzinfo,
+        )
+        day_end = datetime.combine(
+            day + timedelta(days=1),
+            datetime.min.time(),
+            tzinfo=heartbeats[-1].tzinfo,
+        )
+        gaps.extend(
+            (
+                max(0, int((heartbeats[0] - day_start).total_seconds())),
+                max(0, int((day_end - heartbeats[-1]).total_seconds())),
+            )
+        )
     return {
         "count": len(heartbeats),
         "first": _stamp(heartbeats[0]) if heartbeats else None,
         "last": _stamp(heartbeats[-1]) if heartbeats else None,
-        "max_gap_seconds": max(positive_gaps, default=0),
+        "max_gap_seconds": max(gaps, default=0),
     }
 
 
@@ -1010,6 +1061,7 @@ def export_workload_day(
             staged.unlink()
         except FileNotFoundError:
             pass
+    heartbeat = _heartbeat_summary(records)
     return WorkloadViewMetrics(
         day=day.isoformat(),
         analysis_file=analysis_file.name,
@@ -1032,4 +1084,8 @@ def export_workload_day(
         click_groups=metrics["click_groups"],
         summarized_markers=metrics["summarized_markers"],
         spans=metrics["spans"],
+        heartbeat_count=int(heartbeat["count"]),
+        heartbeat_first=heartbeat["first"],
+        heartbeat_last=heartbeat["last"],
+        max_heartbeat_gap_seconds=int(heartbeat["max_gap_seconds"]),
     )

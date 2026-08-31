@@ -94,6 +94,7 @@ from markdown_format import (
     format_section_timestamp_line,
     sanitize_markdown_inline,
 )
+from operator_controls import initial_manual_pause, write_runtime_state
 from scroll_coalesce import (
     ScrollBurst,
     accumulate as scroll_accumulate,
@@ -108,7 +109,7 @@ from window_titles import (
     merge_native_and_aw,
 )
 
-__version__ = "4.4.0"
+__version__ = "4.5.0"
 ANALYSIS_SHADOW_ENABLED = True
 
 # Config mirrors - seeded from AppConfig defaults (single literal source: config.default_config).
@@ -203,7 +204,7 @@ class LoggerState:
 
 
 _state = LoggerState()
-_lock = threading.Lock()
+_lock = threading.RLock()
 _flush_lock = threading.Lock()
 _io_lock = threading.Lock()
 _current_heading = ""
@@ -221,8 +222,13 @@ _last_emitted_url: str | None = None
 
 _pause_secure_app = False
 _pause_secure_field = False
+_pause_manual = False
+_pause_review_center = False
 _is_paused = False
 _privacy_generation = 0
+_manual_control_revision = 0
+_manual_control_pending: bool | None = None
+_manual_state_dirty = threading.Event()
 _current_modifiers: set[str] = set()
 _physical_modifiers: set[object] = set()
 _modifier_counts: dict[str, int] = {}
@@ -345,7 +351,12 @@ def apply_config(cfg: AppConfig) -> None:
 def _recompute_paused_locked() -> None:
     global _is_paused, _last_key_activity_mono, _privacy_generation, _scroll_burst
     was_paused = _is_paused
-    newly = _pause_secure_app or _pause_secure_field
+    newly = (
+        _pause_secure_app
+        or _pause_secure_field
+        or _pause_manual
+        or _pause_review_center
+    )
     if newly and not was_paused:
         _privacy_generation += 1
         _current_modifiers.clear()
@@ -371,14 +382,39 @@ def is_paused() -> bool:
         return _is_paused
 
 
-def _set_pause(*, app: bool | None = None, field: bool | None = None) -> None:
-    global _pause_secure_app, _pause_secure_field
+def _set_pause(
+    *,
+    app: bool | None = None,
+    field: bool | None = None,
+    manual: bool | None = None,
+    review: bool | None = None,
+) -> None:
+    global _pause_secure_app, _pause_secure_field, _pause_manual
+    global _pause_review_center
     with _lock:
+        before = (
+            _pause_secure_app,
+            _pause_secure_field,
+            _pause_manual,
+            _pause_review_center,
+        )
         if app is not None:
             _pause_secure_app = app
         if field is not None:
             _pause_secure_field = field
+        if manual is not None:
+            _pause_manual = manual
+        if review is not None:
+            _pause_review_center = review
         _recompute_paused_locked()
+        after = (
+            _pause_secure_app,
+            _pause_secure_field,
+            _pause_manual,
+            _pause_review_center,
+        )
+        if after != before:
+            _manual_state_dirty.set()
 
 
 def _mark_secure_field_cache(focused: bool) -> None:
@@ -2687,6 +2723,83 @@ def _request_stop(signum=None, _frame=None) -> None:
     _writer_wakeup.set()
 
 
+def _request_manual_control(signum, _frame=None) -> None:
+    """Apply manual privacy control through the shared capture gate."""
+    global _manual_control_pending, _manual_control_revision
+    requested = signum == signal.SIGUSR1
+    _manual_control_revision += 1
+    _manual_control_pending = requested
+    if requested:
+        _set_pause(manual=True)
+    _manual_state_dirty.set()
+
+
+def _publish_runtime_state(
+    *,
+    running: bool,
+    manual_paused: bool | None = None,
+    capture_paused: bool | None = None,
+    control_revision: int | None = None,
+) -> bool:
+    try:
+        write_runtime_state(
+            running=running,
+            manual_paused=_pause_manual if manual_paused is None else manual_paused,
+            capture_paused=is_paused() if capture_paused is None else capture_paused,
+            control_revision=(
+                _manual_control_revision
+                if control_revision is None
+                else control_revision
+            ),
+        )
+        return True
+    except Exception as exc:
+        _diag_rate_limited(
+            f"operator state error [{_exception_category(exc)}]"
+        )
+        return False
+
+
+def _apply_pending_manual_control() -> None:
+    global _manual_control_pending
+    requested = _manual_control_pending
+    _manual_state_dirty.clear()
+    if requested is None:
+        if not _publish_runtime_state(running=True):
+            _manual_state_dirty.set()
+        return
+    revision = _manual_control_revision
+    if requested:
+        published = _publish_runtime_state(
+            running=True,
+            manual_paused=True,
+            capture_paused=True,
+            control_revision=revision,
+        )
+    else:
+        with _lock:
+            capture_after_resume = (
+                _pause_secure_app
+                or _pause_secure_field
+                or _pause_review_center
+            )
+        published = _publish_runtime_state(
+            running=True,
+            manual_paused=False,
+            capture_paused=capture_after_resume,
+            control_revision=revision,
+        )
+    if not published:
+        _manual_state_dirty.set()
+        return
+    if _manual_control_revision != revision or _manual_control_pending is not requested:
+        _manual_state_dirty.set()
+        return
+    if not requested:
+        _set_pause(manual=False)
+    _manual_control_pending = None
+
+
 def _run_worker(target) -> None:
     try:
         target()
@@ -2744,14 +2857,22 @@ def _stop_and_join_listeners(
 def main() -> int:
     global _analysis_idle_active, _analysis_last_heartbeat_mono
     global _analysis_runtime_enabled, _shutdown_reason
+    global _manual_control_pending, _manual_control_revision, _pause_manual
+    global _pause_review_center
     status = 0
     workers: list[threading.Thread] = []
     m_listener = None
     k_listener = None
+    review_center_runtime = None
     previous_handlers: dict[int, object] = {}
     os.umask(0o077)
     _stop_event.clear()
     _shutdown_reason = None
+    _pause_manual = False
+    _pause_review_center = False
+    _manual_control_revision = 0
+    _manual_control_pending = None
+    _manual_state_dirty.clear()
     _fatal_worker_event.clear()
     try:
         for signum in (signal.SIGTERM, signal.SIGINT):
@@ -2781,6 +2902,12 @@ def main() -> int:
         if not acquire_instance_lock():
             _diag("FATAL: another ActivityLogger instance holds the lock, exiting")
             return 1
+        _pause_manual = initial_manual_pause()
+        _set_pause(manual=_pause_manual)
+        for signum in (signal.SIGUSR1, signal.SIGUSR2):
+            previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, _request_manual_control)
+        _publish_runtime_state(running=True)
         startup_stamp = datetime.now().astimezone()
         startup_day = startup_stamp.date()
         try:
@@ -2870,7 +2997,24 @@ def main() -> int:
         k_listener.start()
         _diag("Keyboard and mouse listeners started")
 
-        while not _stop_event.wait(0.5):
+        try:
+            from review_center import create_review_center_runtime
+
+            review_center_runtime = create_review_center_runtime(
+                LOG_DIR,
+                pause_callback=lambda active: _set_pause(review=active),
+            )
+            _diag("Review Center ready")
+        except Exception as e:
+            _diag_rate_limited(
+                f"Review Center unavailable [{_exception_category(e)}]"
+            )
+
+        while not _stop_event.is_set():
+            if review_center_runtime is not None:
+                review_center_runtime.pump()
+            if _manual_state_dirty.is_set():
+                _apply_pending_manual_control()
             if _fatal_worker_event.is_set():
                 status = 1
                 break
@@ -2882,12 +3026,20 @@ def main() -> int:
                 _diag("FATAL: mouse listener stopped unexpectedly")
                 status = 1
                 break
+            _stop_event.wait(0.05 if review_center_runtime is not None else 0.5)
         if _fatal_worker_event.is_set():
             status = 1
     except Exception as e:
         _diag(f"FATAL runtime [{_exception_category(e)}]")
         status = 1
     finally:
+        if review_center_runtime is not None:
+            try:
+                review_center_runtime.close()
+            except Exception as e:
+                _diag_rate_limited(
+                    f"Review Center cleanup failed [{_exception_category(e)}]"
+                )
         _request_stop()
         if not _stop_and_join_listeners(m_listener, k_listener):
             status = 1
@@ -2906,6 +3058,7 @@ def main() -> int:
         _analysis_runtime_enabled = False
         _analysis_idle_active = False
         _analysis_last_heartbeat_mono = None
+        _publish_runtime_state(running=False)
         _close_instance_lock()
         if _shutdown_reason is not None:
             _diag(f"shutdown requested {_shutdown_reason}")
