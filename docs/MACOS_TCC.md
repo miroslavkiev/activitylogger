@@ -106,7 +106,15 @@ Base capture does not require Screen Recording. Browser URL capture is off by de
 
 ## Review Center and manual privacy control
 
-The signed app is a menu-bar style background app without a Dock icon. Normal Launch Agent startup keeps its Review Center hidden. Open `dist/ActivityLoggerNative.app` in Finder while it is already running to show the window.
+The signed app is a menu-bar style background app without a Dock icon. Normal Launch Agent startup keeps its Review Center hidden. Open `dist/ActivityLoggerNative.app` in Finder while it is already running to show the window. ActivityLogger creates private review files, but it does not analyze them or send them anywhere.
+
+Use the Review Center in three steps:
+
+1. Choose an end date and either 5 or 7 completed calendar days. Select **Create review files**.
+2. Select **Show review files in Finder** and start with `REVIEW_PROMPT.md`. Prefer a trusted local tool. Review and redact private text before using any online tool.
+3. Record what happened and save the result locally.
+
+Capture stays paused while the Review Center is visible. Closing or minimizing the window resumes capture unless manual pause, a secure app, or a secure field still requires a pause.
 
 The Review Center uses the same local control functions as these commands:
 
@@ -117,7 +125,7 @@ The Review Center uses the same local control functions as these commands:
 .venv/bin/python scripts/activityloggerctl.py resume
 ```
 
-Pause stops every capture channel through the shared privacy gate. Resume clears only the manual pause and never clears a secure-app or secure-field pause. A paused clipboard change is consumed and is not written later. The manual state is stored with private permissions and survives a restart. An unreadable existing state keeps capture paused.
+Manual pause stops every capture channel through the shared privacy gate. Manual resume clears only the manual pause and never clears a secure-app or secure-field pause. A paused clipboard change is consumed and is not written later. The manual state is stored with private permissions and survives a restart. An unreadable existing state keeps capture paused.
 
 The Review Center and command output do not show captured payloads. Weekly packs are stored under `~/Library/Application Support/ActivityLogger/private_analysis_review/`. They are private plaintext and may contain captured text. Review and redact them before any external use.
 

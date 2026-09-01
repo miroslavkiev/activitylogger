@@ -16,7 +16,7 @@
 | Signed bundle mechanics | Complete | Pinned nested and outer signatures, exact requirement, entitlement and load containment, staged promotion, and tamper rejection passed. Hardened Runtime is intentionally not enabled for the retained local leaf. |
 | Launch Agent lifecycle | Complete | Private canonical plist, bootout/quiesce, bootstrap, rollback or bounded config recovery, and fresh stable exact-PID proof. |
 | Live runtime launch | Complete | Final exact native process remained stable and a real post-restart typing smoke updated the daily log. |
-| Review Center | Complete | Native payload-free health, freshness, storage, privacy controls, fixed 5-day or 7-day review packs, and manual outcomes. Signed 4.5.0 deployment and live controls passed. |
+| Review Center | Source complete, deployment pending | Version 4.5.1 adds a guided three-step flow, direct Finder access to prepared files, plain-language privacy guidance, and local outcomes. Canonical rebuild and live checks are pending. |
 
 ## Verification
 
@@ -26,4 +26,6 @@ The pinned leaf is `0a609d91ba3541a2b9589363974fa460be0f091c` and bundle identif
 
 The legacy `.codesign/identity.p12` and any redundant login-keychain identity remain mode `600` because irreversible deletion requires explicit operator approval. They do not block runtime.
 
-The 2026-09-01 version 4.5.0 gate passed 466 tests, lint, dependency consistency, and the strict dependency audit. The canonical rebuild verified and promoted the signed bundle with the unchanged pinned identity. Native PID `81216` started from the exact deployed path. Payload-free health confirmed v2 format, matching intent, no invalid marker, private modes, manual pause off, and capture active. Live pause and resume both confirmed, the strict deployed signature test passed, and the daily v2 log continued to update safely.
+The previous 2026-09-01 version 4.5.0 gate passed 466 tests, lint, dependency consistency, and the strict dependency audit. The canonical rebuild verified and promoted the signed bundle with the unchanged pinned identity. Native PID `81216` started from the exact deployed path. Payload-free health confirmed v2 format, matching intent, no invalid marker, private modes, manual pause off, and capture active. Live pause and resume both confirmed, the strict deployed signature test passed, and the daily v2 log continued to update safely.
+
+Version 4.5.1 is prepared in source. Its canonical rebuild and live Review Center verification are pending.

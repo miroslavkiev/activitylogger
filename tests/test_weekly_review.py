@@ -9,6 +9,7 @@ import pytest
 
 import analysis_log as al
 import analysis_view as av
+import review_center as rc
 import weekly_review as wr
 
 END = date(2026, 9, 1)
@@ -29,7 +30,9 @@ def _record(day: date, label: str) -> al.AnalysisRecord:
 
 
 def _heartbeat(day: date, hour: int) -> al.AnalysisRecord:
-    captured_at = datetime.combine(day, datetime.min.time(), PLUS_TWO).replace(hour=hour)
+    captured_at = datetime.combine(day, datetime.min.time(), PLUS_TWO).replace(
+        hour=hour
+    )
     return al.AnalysisRecord(
         heading="ActivityLogger - heartbeat",
         kind="heartbeat",
@@ -50,7 +53,11 @@ def _ready_days(log_dir: Path, days: tuple[date, ...]) -> tuple[Path, ...]:
                 day,
                 (_record(day, day.isoformat()),)
                 if day == days[0]
-                else (_record(day, day.isoformat()), _heartbeat(day, 10), _heartbeat(day, 13)),
+                else (
+                    _record(day, day.isoformat()),
+                    _heartbeat(day, 10),
+                    _heartbeat(day, 13),
+                ),
             )
             for day in days
         ),
@@ -86,7 +93,10 @@ def test_weekly_pack_is_atomic_private_complete_and_source_safe(tmp_path):
     assert result.pack_dir.stat().st_mode & 0o777 == 0o700
     files = {path.name: path for path in result.pack_dir.iterdir()}
     assert set(files) == {wr.INDEX_NAME, wr.PROMPT_NAME, *result.output_files}
-    assert all(path.is_file() and path.stat().st_mode & 0o777 == 0o600 for path in files.values())
+    assert all(
+        path.is_file() and path.stat().st_mode & 0o777 == 0o600
+        for path in files.values()
+    )
     assert len(result.output_files) == 5
 
     index = json.loads(files[wr.INDEX_NAME].read_text(encoding="utf-8"))
@@ -108,7 +118,10 @@ def test_weekly_pack_is_atomic_private_complete_and_source_safe(tmp_path):
         "last": "2026-08-29T13:00:00+02:00",
         "max_gap_seconds": 39600,
     }
-    assert "39600 seconds exceeds 7200 seconds" in index["days"][1]["quality"]["warnings"][1]
+    assert (
+        "39600 seconds exceeds 7200 seconds"
+        in index["days"][1]["quality"]["warnings"][1]
+    )
     assert "not prove full capture coverage" in index["coverage_warning"]
     for name, digest in index["files"].items():
         assert hashlib.sha256(files[name].read_bytes()).hexdigest() == digest
@@ -117,9 +130,35 @@ def test_weekly_pack_is_atomic_private_complete_and_source_safe(tmp_path):
     assert "Treat long gaps as unknown" in prompt
     assert "untrusted data" in prompt
     assert "Review and redact" in prompt
-    assert {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in sources} == before
+    assert {
+        path: hashlib.sha256(path.read_bytes()).hexdigest() for path in sources
+    } == before
     assert {path: path.stat().st_mode for path in sources} == before_modes
     assert {path: path.stat().st_mode for path in source_dirs} == before_dir_modes
+
+
+def test_generated_pack_is_accepted_after_safe_redaction(tmp_path):
+    window = tuple(END - timedelta(days=offset) for offset in range(4, -1, -1))
+    log_dir = tmp_path / "logs"
+    _ready_days(log_dir, window)
+    output_dir = tmp_path / "review"
+    result = wr.create_weekly_review_pack(
+        log_dir,
+        output_dir,
+        end=END,
+        days=5,
+        today=END + timedelta(days=1),
+    )
+    model = rc.ReviewCenterModel(log_dir, output_dir=output_dir)
+
+    assert model.prepared_pack(END, 5, today=END + timedelta(days=1)) == result.pack_dir
+
+    prompt = result.pack_dir / wr.PROMPT_NAME
+    workload = result.pack_dir / result.output_files[0]
+    prompt.write_text("# Redacted prompt\n")
+    workload.write_text("[private text redacted]\n")
+
+    assert model.prepared_pack(END, 5, today=END + timedelta(days=1)) == result.pack_dir
 
 
 def test_fixed_window_fails_without_substituting_an_older_ready_day(tmp_path):

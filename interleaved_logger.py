@@ -109,7 +109,7 @@ from window_titles import (
     merge_native_and_aw,
 )
 
-__version__ = "4.5.0"
+__version__ = "4.5.1"
 ANALYSIS_SHADOW_ENABLED = True
 
 # Config mirrors - seeded from AppConfig defaults (single literal source: config.default_config).
