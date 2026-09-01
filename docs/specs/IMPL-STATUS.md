@@ -16,7 +16,7 @@
 | Signed bundle mechanics | Complete | Pinned nested and outer signatures, exact requirement, entitlement and load containment, staged promotion, and tamper rejection passed. Hardened Runtime is intentionally not enabled for the retained local leaf. |
 | Launch Agent lifecycle | Complete | Private canonical plist, bootout/quiesce, bootstrap, rollback or bounded config recovery, and fresh stable exact-PID proof. |
 | Live runtime launch | Complete | Final exact native process remained stable and a real post-restart typing smoke updated the daily log. |
-| Review Center | Source complete, deployment pending | Version 4.5.1 adds a guided three-step flow, direct Finder access to prepared files, plain-language privacy guidance, and local outcomes. Canonical rebuild and live checks are pending. |
+| Review Center | Complete | Version 4.5.1 provides a guided three-step flow, direct Finder access to prepared files, plain-language privacy guidance, and local outcomes. The signed deployment and live flow passed. |
 
 ## Verification
 
@@ -28,4 +28,4 @@ The legacy `.codesign/identity.p12` and any redundant login-keychain identity re
 
 The previous 2026-09-01 version 4.5.0 gate passed 466 tests, lint, dependency consistency, and the strict dependency audit. The canonical rebuild verified and promoted the signed bundle with the unchanged pinned identity. Native PID `81216` started from the exact deployed path. Payload-free health confirmed v2 format, matching intent, no invalid marker, private modes, manual pause off, and capture active. Live pause and resume both confirmed, the strict deployed signature test passed, and the daily v2 log continued to update safely.
 
-Version 4.5.1 is prepared in source. Its canonical rebuild and live Review Center verification are pending.
+Version 4.5.1 passed 514 tests with 1 skipped, lint, dependency consistency, and the strict dependency audit with no known vulnerabilities. The canonical rebuild signed, verified, promoted, and restarted the app with the unchanged pinned identity. Exactly one native process, PID `49349`, runs from the deployed path under Launch Agent wrapper PID `46465`. Payload-free health confirmed v2 format, matching intent, no invalid marker, private modes, and manual pause off. The live Review Center showed the guided three-step flow, opened the prepared prompt in Finder, and kept capture paused while Finder had focus. A separate live screenshot review found no material UX or layout issue.
