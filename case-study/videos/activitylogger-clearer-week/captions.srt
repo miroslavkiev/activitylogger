@@ -103,9 +103,9 @@ You may try one small idea, record a
 result in ActivityLogger, or choose no action.
 
 27
-00:01:22,100 --> 00:01:23,298
+00:01:22,100 --> 00:01:23,220
 Patterns may emerge.
 
 28
-00:01:23,363 --> 00:01:24,992
+00:01:23,272 --> 00:01:24,792
 You decide what they mean.

@@ -42,4 +42,4 @@ focused presentation pacing, clear product moments, and a quiet human ending.
 - Do not open or copy real ActivityLogger logs or private review files.
 - Keep claims inside the approved repository evidence register.
 - Keep the final four seconds still.
-- Reuse the proven local Kokoro `am_michael` voice at natural speed through the OpenMontage Python environment.
+- Reuse the proven local Kokoro `am_michael` voice through the OpenMontage Python environment. Use speed 1.00 for lines 01 to 07 and speed 1.12 for the brighter, more confident closing line 08.

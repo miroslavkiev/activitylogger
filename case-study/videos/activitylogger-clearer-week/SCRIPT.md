@@ -2,8 +2,8 @@
 
 **Draft duration:** 90 seconds
 **Draft word count:** 166 words
-**Voice:** Kokoro `am_michael` at natural speed
-**Voice settings:** Natural pace, bright clarity, low drama
+**Voice:** Kokoro `am_michael`, speed 1.00 for lines 01 to 07 and speed 1.12 for line 08
+**Voice settings:** Natural pace, bright clarity, low drama, with a quicker and more energetic close
 **Voice direction:** Positive and grounded. Treat evidence and limits with equal care. Build confidence through the middle, then let the human choice feel quiet and important.
 **Timing status:** Voice clips measured. Caption words use the exact script text and each rendered clip duration.
 
@@ -59,7 +59,7 @@
 ## Line CW-08 - What it means (Frame 8)
 
 **Time:** 01:22-01:26
-**Delivery:** Quiet and human. Finish before the four-second hold.
+**Delivery:** Bright and confident. Add a small lift to the final sentence, then finish before the hold.
 
     Patterns may emerge. You decide what they mean.
 

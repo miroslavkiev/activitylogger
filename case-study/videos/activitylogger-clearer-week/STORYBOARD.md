@@ -183,10 +183,10 @@ Scene 4 (9.8-12.0s): the full trust frame holds. No glow, scan, or security shie
 - persuasion: Control through a clear handoff boundary
 - beat: agency
 - blueprint: grid-card-assemble (Adapt)
-- asset_candidates: assets/ui-primitives.svg - local reusable UI symbols
+- asset_candidates: assets/ui-primitives.svg - local reusable UI symbols; assets/brands/chatgpt.svg, assets/brands/gemini.svg, assets/brands/claude-code.svg - tool brand marks used as equal examples
 - focal: the person's review and redact step
 - roles: prepare = supporting; review and redact = focal; chosen tool = supporting; boundary labels = proof
-- on_screen: "1. ActivityLogger prepares" / "2. You review and redact" / "3. You choose a trusted tool"
+- on_screen: "1. ActivityLogger prepares" / "2. You review and redact" / "3. You choose a trusted tool" / "Examples" / "ChatGPT" / "Gemini" / "Claude Code" / "Selected by you"
 - source_claims: C06, C08, C09, C10
 - sfx: none
 
@@ -197,7 +197,7 @@ Adapt: place three steps on the added 12-column film grid. Do not connect them w
 
 Scene 1 (0.0-3.5s): Step 1 enters across columns 1 to 4 with a local file icon and `Prepares files` (`center-outward-expansion`, short-path variant).
 Scene 2 (3.5-7.5s): Step 2 settles into the central columns as the largest card (`spring-pop-entrance`, restrained). `Review and redact` uses ink text, and its teal underline draws once (`svg-path-draw`).
-Scene 3 (7.5-11.5s): Step 3 enters across columns 9 to 12, labeled `Trusted tool chosen by you` (`center-outward-expansion`, short-path variant).
+Scene 3 (7.5-11.5s): Step 3 enters across columns 9 to 12, labeled `You choose a trusted tool`. ChatGPT, Gemini, and Claude Code appear with equal weight under `Examples` and `Selected by you` (`center-outward-expansion`, short-path variant).
 Scene 4 (11.5-14.0s): all three steps hold. There is no automatic upload arrow or automatic insight.
 
 ## Frame 6 - Evidence, with limits

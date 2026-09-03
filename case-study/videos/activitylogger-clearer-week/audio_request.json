@@ -32,7 +32,9 @@
     },
     {
       "id": "08",
-      "text": "Patterns may emerge. You decide what they mean."
+      "text": "Patterns may emerge. You decide what they mean.",
+      "speed": 1.12,
+      "delivery": "bright and confident"
     }
   ],
   "bgm": null,

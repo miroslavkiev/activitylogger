@@ -313,42 +313,56 @@
       line-height: 1;
     }
 
-    [class~="f05-review-redact-choose-choice"] {
+    [class~="f05-review-redact-choose-trusted-tools"] {
       display: flex;
-      align-items: center;
-      gap: 18px;
-      color: #1238d8;
+      min-height: 154px;
+      box-sizing: border-box;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: center;
+      gap: 7px;
+      padding: 10px 14px;
     }
 
-    [class~="f05-review-redact-choose-choice"] svg {
-      width: 70px;
-      height: 70px;
-    }
-
-    [class~="f05-review-redact-choose-choice"] path,
-    [class~="f05-review-redact-choose-choice"] polyline {
-      fill: none;
-      stroke: currentColor;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      stroke-width: 5;
-    }
-
-    [class~="f05-review-redact-choose-choice-copy"] {
-      display: grid;
-      gap: 5px;
-    }
-
-    [class~="f05-review-redact-choose-choice-name"] {
-      color: #0f173d;
-      font-size: 22px;
+    [class~="f05-review-redact-choose-examples"] {
+      color: #4e5d85;
+      font-size: 14px;
       font-weight: 700;
+      letter-spacing: 0.1em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+
+    [class~="f05-review-redact-choose-tool-row"] {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    [class~="f05-review-redact-choose-tool"] {
+      display: grid;
+      min-width: 0;
+      place-items: center;
+      gap: 4px;
+      color: #0f173d;
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.2;
+      text-align: center;
+    }
+
+    [class~="f05-review-redact-choose-tool"] img {
+      width: 50px;
+      height: 50px;
+      object-fit: contain;
     }
 
     [class~="f05-review-redact-choose-choice-proof"] {
       color: #4e5d85;
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 500;
+      line-height: 1.2;
+      text-align: center;
     }
   </style>
 
@@ -409,17 +423,23 @@
             <span class="f05-review-redact-choose-step-label">Choose</span>
           </div>
           <h2 id="f05-review-redact-choose-step-3-title" class="f05-review-redact-choose-title">You choose a trusted tool</h2>
-          <div id="f05-review-redact-choose-step-3-visual" class="f05-review-redact-choose-side-visual">
-            <div class="f05-review-redact-choose-choice">
-              <svg viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <path d="M40 8 65 18v20c0 17-10 28-25 34C25 66 15 55 15 38V18z" />
-                <polyline points="28,39 36,47 53,29" />
-              </svg>
-              <div class="f05-review-redact-choose-choice-copy">
-                <span class="f05-review-redact-choose-choice-name">Trusted tool</span>
-                <span class="f05-review-redact-choose-choice-proof">Selected by you</span>
-              </div>
+          <div id="f05-review-redact-choose-step-3-visual" class="f05-review-redact-choose-side-visual f05-review-redact-choose-trusted-tools">
+            <span class="f05-review-redact-choose-examples">Examples</span>
+            <div class="f05-review-redact-choose-tool-row" role="group" aria-label="Examples you may choose: ChatGPT, Gemini, and Claude Code">
+              <span class="f05-review-redact-choose-tool">
+                <img src="assets/brands/chatgpt.svg" alt="" aria-hidden="true" />
+                <span>ChatGPT</span>
+              </span>
+              <span class="f05-review-redact-choose-tool">
+                <img src="assets/brands/gemini.svg" alt="" aria-hidden="true" />
+                <span>Gemini</span>
+              </span>
+              <span class="f05-review-redact-choose-tool">
+                <img src="assets/brands/claude-code.svg" alt="" aria-hidden="true" />
+                <span>Claude Code</span>
+              </span>
             </div>
+            <span class="f05-review-redact-choose-choice-proof">Selected by you</span>
           </div>
           <div id="f05-review-redact-choose-step-3-pill" class="f05-review-redact-choose-side-pill"><span class="f05-review-redact-choose-dot"></span>Your choice</div>
         </section>

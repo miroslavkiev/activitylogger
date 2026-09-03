@@ -5,16 +5,17 @@ Option 3, Clearer Week, was selected and built as a 90-second HyperFrames projec
 ## Current build
 
 - Project: `case-study/videos/activitylogger-clearer-week`
+- Master render: `renders/activitylogger-clearer-week-4k-60fps.mp4`
 - Review render: `renders/activitylogger-clearer-week-review-1080p.mp4`
 - HyperFrames: 0.8.27
-- Review format: 1920x1080 at 30 fps
-- Verified media: 90 seconds, 2,700 H.264 frames, BT.709, stereo AAC at 48 kHz
-- SHA-256: `996c9dd340e7c1197ab00df898c37ed581bddf78735730a8274f7440c3021c5a`
-- Narration: local Kokoro `am_michael`, reused from the existing installation
+- Master format: 3840x2160 at 60 fps
+- Verified master: 90 seconds, 5,400 H.264 frames, BT.709, stereo AAC at 48 kHz
+- Master SHA-256: `4943cdf4382276c409406dbd7c0f7d3dae79ccce1ab3247c90e24b1e868c5ecd`
+- Narration: local Kokoro `am_michael`, speed 1.00 for lines 01 to 07 and speed 1.12 for the more energetic line 08
 - Music and effects: none
 - Captions: 166 exact script words, timed from the rendered clip lengths, plus SRT
 - Final hold: captions clear before 85.3 seconds and the still frame holds to 90 seconds
-- Master plan: make the native 3840x2160 master after review feedback is closed
+- Master status: rendered, decoded, and visually checked
 
 ## Production boundary
 
@@ -30,14 +31,14 @@ Option 3, Clearer Week, was selected and built as a 90-second HyperFrames projec
 ## Delivery recommendation
 
 - Planning canvas: 1920x1080, 16:9
-- Planning and master rate: 30 fps
-- Final master after approval: native 3840x2160 at 30 fps, rendered from source
+- Authoring rate: 30 fps
+- Final master: native 3840x2160 at 60 fps, rendered from source
 - Review proxy: 1920x1080 at 30 fps
 - Color: BT.709
 - Captions: open captions plus an SRT file
 - Final still hold: 4 seconds, included inside the stated duration
 
-Use 60 fps only if the chosen delivery channel needs it. If that changes, rebuild every cut and transition on the new frame grid before rendering.
+The final delivery uses 60 fps. The master frame grid and full file decode were checked after render.
 
 ## Shared visual rules
 
@@ -82,6 +83,7 @@ The proposal storyboards set `sfx: none` so draft prose cannot be treated as a s
 | ActivityLogger icon | `assets/activitylogger-icon-source.png` | Product reveal and close | Keep its shape and colors. Do not stretch or filter it. |
 | Review Center UI | Reconstructed from `review_center.py`, lines 270-329, 558-688, 1097-1129, and 1192-1229 | Product demo | Use real controls, statuses, and save actions with illustrative data only. No real local screenshot is needed. |
 | Sora and Manrope for Option 3 | Official Google Fonts source, to be obtained after selection | Ciklum type roles | Store local font files and their license. Do not depend on a CDN at render time. |
+| OpenAI, Gemini, and Claude marks | Third-party SVG sources recorded with hashes in `capture/extracted/asset-descriptions.md` | Equal examples in the user-choice step | Keep unmodified, name each tool, and do not imply endorsement. Confirm current vendor brand terms before public release. |
 | Fonts for Options 1 and 2 | Local licensed font files, to be chosen after selection | Display, body, and mono roles | Pin the exact files used by the chosen project. |
 | Ciklum wordmark | No approved official logo asset is present; the handoff only has a CSS text treatment | None in this unbranded proposal | If Option 3 becomes a branded Ciklum film, an approved official wordmark is a required release gate. Do not use the CSS treatment as the official mark. |
 
@@ -97,8 +99,8 @@ The proposal storyboards set `sfx: none` so draft prose cannot be treated as a s
 8. Generate and measure the final narration. Complete.
 9. Add motion, one frame at a time, using the storyboard cues. Complete.
 10. Inspect every frame midpoint and both sides of every cut. Complete.
-11. Render and review the 1920x1080 film. Render complete, ready for user review.
-12. Render the native master and reduced-motion version from the same source. After review.
+11. Render and review the 1920x1080 film. Complete.
+12. Render and verify the native 3840x2160, 60 fps master. Complete.
 
 ## QA gate
 

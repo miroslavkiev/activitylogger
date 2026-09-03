@@ -1540,74 +1540,74 @@
       "id": "caption-group-65",
       "frame": 8,
       "start": 82.1,
-      "end": 83.298,
+      "end": 83.22,
       "text": "Patterns may emerge.",
       "words": [
         {
           "id": "caption-word-65-0",
           "text": "Patterns",
           "start": 82.1,
-          "end": 82.531
+          "end": 82.5
         },
         {
           "id": "caption-word-65-1",
           "text": "may",
-          "start": 82.558,
-          "end": 82.827
+          "start": 82.525,
+          "end": 82.775
         },
         {
           "id": "caption-word-65-2",
           "text": "emerge.",
-          "start": 82.854,
-          "end": 83.178
+          "start": 82.8,
+          "end": 83.1
         }
       ]
     },
     {
       "id": "caption-group-66",
       "frame": 8,
-      "start": 83.363,
-      "end": 84.01,
+      "start": 83.272,
+      "end": 83.872,
       "text": "You decide",
       "words": [
         {
           "id": "caption-word-66-0",
           "text": "You",
-          "start": 83.363,
-          "end": 83.632
+          "start": 83.272,
+          "end": 83.522
         },
         {
           "id": "caption-word-66-1",
           "text": "decide",
-          "start": 83.659,
-          "end": 83.983
+          "start": 83.547,
+          "end": 83.847
         }
       ]
     },
     {
       "id": "caption-group-67",
       "frame": 8,
-      "start": 84.01,
-      "end": 84.992,
+      "start": 83.872,
+      "end": 84.792,
       "text": "what they mean.",
       "words": [
         {
           "id": "caption-word-67-0",
           "text": "what",
-          "start": 84.01,
-          "end": 84.279
+          "start": 83.872,
+          "end": 84.122
         },
         {
           "id": "caption-word-67-1",
           "text": "they",
-          "start": 84.306,
-          "end": 84.575
+          "start": 84.147,
+          "end": 84.397
         },
         {
           "id": "caption-word-67-2",
           "text": "mean.",
-          "start": 84.602,
-          "end": 84.872
+          "start": 84.422,
+          "end": 84.672
         }
       ]
     }
