@@ -1,0 +1,1069 @@
+{
+  "tts_provider": "kokoro",
+  "voice_id": "am_michael",
+  "bgm": null,
+  "bgm_pending": false,
+  "bgm_provider": null,
+  "bgm_pid": null,
+  "bgm_log": null,
+  "bgm_mode": null,
+  "bgm_target_duration_s": null,
+  "bgm_seed_duration_s": null,
+  "bgm_loop_count": null,
+  "voices": [
+    {
+      "id": "01",
+      "path": "assets/voice/01.wav",
+      "duration_s": 5.845,
+      "words": [
+        {
+          "id": "word-1",
+          "text": "At",
+          "start": 0.1,
+          "end": 0.345
+        },
+        {
+          "id": "word-2",
+          "text": "the",
+          "start": 0.369,
+          "end": 0.613
+        },
+        {
+          "id": "word-3",
+          "text": "end",
+          "start": 0.638,
+          "end": 0.882
+        },
+        {
+          "id": "word-4",
+          "text": "of",
+          "start": 0.907,
+          "end": 1.151
+        },
+        {
+          "id": "word-5",
+          "text": "a",
+          "start": 1.176,
+          "end": 1.42
+        },
+        {
+          "id": "word-6",
+          "text": "busy",
+          "start": 1.445,
+          "end": 1.689
+        },
+        {
+          "id": "word-7",
+          "text": "week,",
+          "start": 1.714,
+          "end": 1.958
+        },
+        {
+          "id": "word-8",
+          "text": "the",
+          "start": 2.044,
+          "end": 2.288
+        },
+        {
+          "id": "word-9",
+          "text": "hardest",
+          "start": 2.313,
+          "end": 2.655
+        },
+        {
+          "id": "word-10",
+          "text": "question",
+          "start": 2.68,
+          "end": 3.071
+        },
+        {
+          "id": "word-11",
+          "text": "can",
+          "start": 3.095,
+          "end": 3.34
+        },
+        {
+          "id": "word-12",
+          "text": "be",
+          "start": 3.364,
+          "end": 3.609
+        },
+        {
+          "id": "word-13",
+          "text": "the",
+          "start": 3.633,
+          "end": 3.878
+        },
+        {
+          "id": "word-14",
+          "text": "simplest:",
+          "start": 3.902,
+          "end": 4.293
+        },
+        {
+          "id": "word-15",
+          "text": "what",
+          "start": 4.379,
+          "end": 4.623
+        },
+        {
+          "id": "word-16",
+          "text": "is",
+          "start": 4.648,
+          "end": 4.892
+        },
+        {
+          "id": "word-17",
+          "text": "worth",
+          "start": 4.917,
+          "end": 5.161
+        },
+        {
+          "id": "word-18",
+          "text": "changing?",
+          "start": 5.186,
+          "end": 5.577
+        }
+      ]
+    },
+    {
+      "id": "02",
+      "path": "assets/voice/02.wav",
+      "duration_s": 9.28,
+      "words": [
+        {
+          "id": "word-1",
+          "text": "Start",
+          "start": 0.1,
+          "end": 0.403
+        },
+        {
+          "id": "word-2",
+          "text": "with",
+          "start": 0.433,
+          "end": 0.736
+        },
+        {
+          "id": "word-3",
+          "text": "what",
+          "start": 0.767,
+          "end": 1.07
+        },
+        {
+          "id": "word-4",
+          "text": "was",
+          "start": 1.1,
+          "end": 1.403
+        },
+        {
+          "id": "word-5",
+          "text": "observed.",
+          "start": 1.433,
+          "end": 1.918
+        },
+        {
+          "id": "word-6",
+          "text": "Choose",
+          "start": 2.127,
+          "end": 2.49
+        },
+        {
+          "id": "word-7",
+          "text": "five",
+          "start": 2.521,
+          "end": 2.824
+        },
+        {
+          "id": "word-8",
+          "text": "consecutive",
+          "start": 2.854,
+          "end": 3.521
+        },
+        {
+          "id": "word-9",
+          "text": "completed",
+          "start": 3.551,
+          "end": 4.096
+        },
+        {
+          "id": "word-10",
+          "text": "calendar",
+          "start": 4.127,
+          "end": 4.612
+        },
+        {
+          "id": "word-11",
+          "text": "days.",
+          "start": 4.642,
+          "end": 4.945
+        },
+        {
+          "id": "word-12",
+          "text": "Each",
+          "start": 5.153,
+          "end": 5.456
+        },
+        {
+          "id": "word-13",
+          "text": "one",
+          "start": 5.487,
+          "end": 5.79
+        },
+        {
+          "id": "word-14",
+          "text": "must",
+          "start": 5.82,
+          "end": 6.123
+        },
+        {
+          "id": "word-15",
+          "text": "pass",
+          "start": 6.153,
+          "end": 6.456
+        },
+        {
+          "id": "word-16",
+          "text": "its",
+          "start": 6.487,
+          "end": 6.79
+        },
+        {
+          "id": "word-17",
+          "text": "checks",
+          "start": 6.82,
+          "end": 7.184
+        },
+        {
+          "id": "word-18",
+          "text": "before",
+          "start": 7.214,
+          "end": 7.578
+        },
+        {
+          "id": "word-19",
+          "text": "the",
+          "start": 7.608,
+          "end": 7.911
+        },
+        {
+          "id": "word-20",
+          "text": "review",
+          "start": 7.941,
+          "end": 8.305
+        },
+        {
+          "id": "word-21",
+          "text": "can",
+          "start": 8.335,
+          "end": 8.638
+        },
+        {
+          "id": "word-22",
+          "text": "begin.",
+          "start": 8.669,
+          "end": 8.972
+        }
+      ]
+    },
+    {
+      "id": "03",
+      "path": "assets/voice/03.wav",
+      "duration_s": 9.621,
+      "words": [
+        {
+          "id": "word-1",
+          "text": "Behind",
+          "start": 0.1,
+          "end": 0.474
+        },
+        {
+          "id": "word-2",
+          "text": "that",
+          "start": 0.506,
+          "end": 0.818
+        },
+        {
+          "id": "word-3",
+          "text": "moment",
+          "start": 0.849,
+          "end": 1.223
+        },
+        {
+          "id": "word-4",
+          "text": "is",
+          "start": 1.255,
+          "end": 1.567
+        },
+        {
+          "id": "word-5",
+          "text": "a",
+          "start": 1.598,
+          "end": 1.91
+        },
+        {
+          "id": "word-6",
+          "text": "quiet",
+          "start": 1.941,
+          "end": 2.253
+        },
+        {
+          "id": "word-7",
+          "text": "trail",
+          "start": 2.285,
+          "end": 2.597
+        },
+        {
+          "id": "word-8",
+          "text": "in",
+          "start": 2.628,
+          "end": 2.94
+        },
+        {
+          "id": "word-9",
+          "text": "daily",
+          "start": 2.971,
+          "end": 3.283
+        },
+        {
+          "id": "word-10",
+          "text": "Markdown,",
+          "start": 3.314,
+          "end": 3.814
+        },
+        {
+          "id": "word-11",
+          "text": "including",
+          "start": 3.923,
+          "end": 4.485
+        },
+        {
+          "id": "word-12",
+          "text": "app",
+          "start": 4.516,
+          "end": 4.828
+        },
+        {
+          "id": "word-13",
+          "text": "and",
+          "start": 4.859,
+          "end": 5.171
+        },
+        {
+          "id": "word-14",
+          "text": "window",
+          "start": 5.203,
+          "end": 5.577
+        },
+        {
+          "id": "word-15",
+          "text": "context,",
+          "start": 5.608,
+          "end": 6.045
+        },
+        {
+          "id": "word-16",
+          "text": "typing",
+          "start": 6.154,
+          "end": 6.529
+        },
+        {
+          "id": "word-17",
+          "text": "and",
+          "start": 6.56,
+          "end": 6.872
+        },
+        {
+          "id": "word-18",
+          "text": "hotkeys,",
+          "start": 6.903,
+          "end": 7.34
+        },
+        {
+          "id": "word-19",
+          "text": "clicks,",
+          "start": 7.45,
+          "end": 7.824
+        },
+        {
+          "id": "word-20",
+          "text": "and",
+          "start": 7.933,
+          "end": 8.245
+        },
+        {
+          "id": "word-21",
+          "text": "clipboard",
+          "start": 8.277,
+          "end": 8.838
+        },
+        {
+          "id": "word-22",
+          "text": "changes.",
+          "start": 8.87,
+          "end": 9.306
+        }
+      ]
+    },
+    {
+      "id": "04",
+      "path": "assets/voice/04.wav",
+      "duration_s": 11.029,
+      "words": [
+        {
+          "id": "word-1",
+          "text": "The",
+          "start": 0.1,
+          "end": 0.417
+        },
+        {
+          "id": "word-2",
+          "text": "files",
+          "start": 0.449,
+          "end": 0.766
+        },
+        {
+          "id": "word-3",
+          "text": "are",
+          "start": 0.797,
+          "end": 1.114
+        },
+        {
+          "id": "word-4",
+          "text": "sensitive",
+          "start": 1.146,
+          "end": 1.717
+        },
+        {
+          "id": "word-5",
+          "text": "plaintext.",
+          "start": 1.748,
+          "end": 2.319
+        },
+        {
+          "id": "word-6",
+          "text": "Configured",
+          "start": 2.537,
+          "end": 3.171
+        },
+        {
+          "id": "word-7",
+          "text": "secure",
+          "start": 3.202,
+          "end": 3.583
+        },
+        {
+          "id": "word-8",
+          "text": "apps,",
+          "start": 3.615,
+          "end": 3.932
+        },
+        {
+          "id": "word-9",
+          "text": "secure",
+          "start": 4.043,
+          "end": 4.423
+        },
+        {
+          "id": "word-10",
+          "text": "fields,",
+          "start": 4.455,
+          "end": 4.835
+        },
+        {
+          "id": "word-11",
+          "text": "and",
+          "start": 4.946,
+          "end": 5.263
+        },
+        {
+          "id": "word-12",
+          "text": "manual",
+          "start": 5.295,
+          "end": 5.675
+        },
+        {
+          "id": "word-13",
+          "text": "pause",
+          "start": 5.707,
+          "end": 6.024
+        },
+        {
+          "id": "word-14",
+          "text": "make",
+          "start": 6.055,
+          "end": 6.372
+        },
+        {
+          "id": "word-15",
+          "text": "capture",
+          "start": 6.404,
+          "end": 6.848
+        },
+        {
+          "id": "word-16",
+          "text": "step",
+          "start": 6.88,
+          "end": 7.197
+        },
+        {
+          "id": "word-17",
+          "text": "back.",
+          "start": 7.228,
+          "end": 7.545
+        },
+        {
+          "id": "word-18",
+          "text": "There",
+          "start": 7.763,
+          "end": 8.08
+        },
+        {
+          "id": "word-19",
+          "text": "are",
+          "start": 8.112,
+          "end": 8.429
+        },
+        {
+          "id": "word-20",
+          "text": "no",
+          "start": 8.46,
+          "end": 8.777
+        },
+        {
+          "id": "word-21",
+          "text": "screenshots,",
+          "start": 8.809,
+          "end": 9.507
+        },
+        {
+          "id": "word-22",
+          "text": "audio,",
+          "start": 9.617,
+          "end": 9.934
+        },
+        {
+          "id": "word-23",
+          "text": "or",
+          "start": 10.045,
+          "end": 10.362
+        },
+        {
+          "id": "word-24",
+          "text": "video.",
+          "start": 10.394,
+          "end": 10.711
+        }
+      ]
+    },
+    {
+      "id": "05",
+      "path": "assets/voice/05.wav",
+      "duration_s": 10.645,
+      "words": [
+        {
+          "id": "word-1",
+          "text": "ActivityLogger",
+          "start": 0.1,
+          "end": 0.927
+        },
+        {
+          "id": "word-2",
+          "text": "prepares",
+          "start": 0.957,
+          "end": 1.429
+        },
+        {
+          "id": "word-3",
+          "text": "the",
+          "start": 1.459,
+          "end": 1.754
+        },
+        {
+          "id": "word-4",
+          "text": "review",
+          "start": 1.784,
+          "end": 2.138
+        },
+        {
+          "id": "word-5",
+          "text": "files.",
+          "start": 2.168,
+          "end": 2.463
+        },
+        {
+          "id": "word-6",
+          "text": "You",
+          "start": 2.666,
+          "end": 2.961
+        },
+        {
+          "id": "word-7",
+          "text": "review",
+          "start": 2.991,
+          "end": 3.345
+        },
+        {
+          "id": "word-8",
+          "text": "and",
+          "start": 3.375,
+          "end": 3.67
+        },
+        {
+          "id": "word-9",
+          "text": "redact",
+          "start": 3.7,
+          "end": 4.054
+        },
+        {
+          "id": "word-10",
+          "text": "them.",
+          "start": 4.084,
+          "end": 4.379
+        },
+        {
+          "id": "word-11",
+          "text": "Then",
+          "start": 4.582,
+          "end": 4.878
+        },
+        {
+          "id": "word-12",
+          "text": "you",
+          "start": 4.907,
+          "end": 5.203
+        },
+        {
+          "id": "word-13",
+          "text": "choose",
+          "start": 5.232,
+          "end": 5.586
+        },
+        {
+          "id": "word-14",
+          "text": "a",
+          "start": 5.616,
+          "end": 5.911
+        },
+        {
+          "id": "word-15",
+          "text": "trusted",
+          "start": 5.941,
+          "end": 6.354
+        },
+        {
+          "id": "word-16",
+          "text": "tool",
+          "start": 6.384,
+          "end": 6.679
+        },
+        {
+          "id": "word-17",
+          "text": "to",
+          "start": 6.709,
+          "end": 7.004
+        },
+        {
+          "id": "word-18",
+          "text": "look",
+          "start": 7.034,
+          "end": 7.329
+        },
+        {
+          "id": "word-19",
+          "text": "for",
+          "start": 7.359,
+          "end": 7.654
+        },
+        {
+          "id": "word-20",
+          "text": "repeated",
+          "start": 7.684,
+          "end": 8.156
+        },
+        {
+          "id": "word-21",
+          "text": "work,",
+          "start": 8.186,
+          "end": 8.481
+        },
+        {
+          "id": "word-22",
+          "text": "friction,",
+          "start": 8.584,
+          "end": 9.057
+        },
+        {
+          "id": "word-23",
+          "text": "and",
+          "start": 9.16,
+          "end": 9.456
+        },
+        {
+          "id": "word-24",
+          "text": "possible",
+          "start": 9.485,
+          "end": 9.958
+        },
+        {
+          "id": "word-25",
+          "text": "errors.",
+          "start": 9.987,
+          "end": 10.342
+        }
+      ]
+    },
+    {
+      "id": "06",
+      "path": "assets/voice/06.wav",
+      "duration_s": 9.088,
+      "words": [
+        {
+          "id": "word-1",
+          "text": "A",
+          "start": 0.1,
+          "end": 0.398
+        },
+        {
+          "id": "word-2",
+          "text": "careful",
+          "start": 0.427,
+          "end": 0.844
+        },
+        {
+          "id": "word-3",
+          "text": "review",
+          "start": 0.874,
+          "end": 1.231
+        },
+        {
+          "id": "word-4",
+          "text": "can",
+          "start": 1.261,
+          "end": 1.558
+        },
+        {
+          "id": "word-5",
+          "text": "link",
+          "start": 1.588,
+          "end": 1.886
+        },
+        {
+          "id": "word-6",
+          "text": "each",
+          "start": 1.916,
+          "end": 2.213
+        },
+        {
+          "id": "word-7",
+          "text": "possible",
+          "start": 2.243,
+          "end": 2.719
+        },
+        {
+          "id": "word-8",
+          "text": "pattern",
+          "start": 2.749,
+          "end": 3.166
+        },
+        {
+          "id": "word-9",
+          "text": "to",
+          "start": 3.195,
+          "end": 3.493
+        },
+        {
+          "id": "word-10",
+          "text": "its",
+          "start": 3.523,
+          "end": 3.82
+        },
+        {
+          "id": "word-11",
+          "text": "day",
+          "start": 3.85,
+          "end": 4.148
+        },
+        {
+          "id": "word-12",
+          "text": "and",
+          "start": 4.178,
+          "end": 4.475
+        },
+        {
+          "id": "word-13",
+          "text": "context.",
+          "start": 4.505,
+          "end": 4.922
+        },
+        {
+          "id": "word-14",
+          "text": "Work",
+          "start": 5.126,
+          "end": 5.424
+        },
+        {
+          "id": "word-15",
+          "text": "spans",
+          "start": 5.454,
+          "end": 5.751
+        },
+        {
+          "id": "word-16",
+          "text": "are",
+          "start": 5.781,
+          "end": 6.079
+        },
+        {
+          "id": "word-17",
+          "text": "not",
+          "start": 6.108,
+          "end": 6.406
+        },
+        {
+          "id": "word-18",
+          "text": "exact",
+          "start": 6.436,
+          "end": 6.733
+        },
+        {
+          "id": "word-19",
+          "text": "time",
+          "start": 6.763,
+          "end": 7.061
+        },
+        {
+          "id": "word-20",
+          "text": "records.",
+          "start": 7.091,
+          "end": 7.507
+        },
+        {
+          "id": "word-21",
+          "text": "Gaps",
+          "start": 7.712,
+          "end": 8.01
+        },
+        {
+          "id": "word-22",
+          "text": "stay",
+          "start": 8.039,
+          "end": 8.337
+        },
+        {
+          "id": "word-23",
+          "text": "unknown.",
+          "start": 8.367,
+          "end": 8.783
+        }
+      ]
+    },
+    {
+      "id": "07",
+      "path": "assets/voice/07.wav",
+      "duration_s": 10.453,
+      "words": [
+        {
+          "id": "word-1",
+          "text": "Your",
+          "start": 0.1,
+          "end": 0.416
+        },
+        {
+          "id": "word-2",
+          "text": "chosen",
+          "start": 0.447,
+          "end": 0.826
+        },
+        {
+          "id": "word-3",
+          "text": "review",
+          "start": 0.858,
+          "end": 1.237
+        },
+        {
+          "id": "word-4",
+          "text": "tool",
+          "start": 1.269,
+          "end": 1.584
+        },
+        {
+          "id": "word-5",
+          "text": "can",
+          "start": 1.616,
+          "end": 1.932
+        },
+        {
+          "id": "word-6",
+          "text": "suggest.",
+          "start": 1.963,
+          "end": 2.406
+        },
+        {
+          "id": "word-7",
+          "text": "It",
+          "start": 2.623,
+          "end": 2.939
+        },
+        {
+          "id": "word-8",
+          "text": "cannot",
+          "start": 2.97,
+          "end": 3.349
+        },
+        {
+          "id": "word-9",
+          "text": "decide.",
+          "start": 3.381,
+          "end": 3.76
+        },
+        {
+          "id": "word-10",
+          "text": "You",
+          "start": 3.977,
+          "end": 4.293
+        },
+        {
+          "id": "word-11",
+          "text": "may",
+          "start": 4.324,
+          "end": 4.64
+        },
+        {
+          "id": "word-12",
+          "text": "try",
+          "start": 4.672,
+          "end": 4.988
+        },
+        {
+          "id": "word-13",
+          "text": "one",
+          "start": 5.019,
+          "end": 5.335
+        },
+        {
+          "id": "word-14",
+          "text": "small",
+          "start": 5.367,
+          "end": 5.682
+        },
+        {
+          "id": "word-15",
+          "text": "idea,",
+          "start": 5.714,
+          "end": 6.03
+        },
+        {
+          "id": "word-16",
+          "text": "record",
+          "start": 6.14,
+          "end": 6.519
+        },
+        {
+          "id": "word-17",
+          "text": "a",
+          "start": 6.551,
+          "end": 6.867
+        },
+        {
+          "id": "word-18",
+          "text": "result",
+          "start": 6.898,
+          "end": 7.277
+        },
+        {
+          "id": "word-19",
+          "text": "in",
+          "start": 7.309,
+          "end": 7.625
+        },
+        {
+          "id": "word-20",
+          "text": "ActivityLogger,",
+          "start": 7.657,
+          "end": 8.541
+        },
+        {
+          "id": "word-21",
+          "text": "or",
+          "start": 8.651,
+          "end": 8.967
+        },
+        {
+          "id": "word-22",
+          "text": "choose",
+          "start": 8.999,
+          "end": 9.378
+        },
+        {
+          "id": "word-23",
+          "text": "no",
+          "start": 9.409,
+          "end": 9.725
+        },
+        {
+          "id": "word-24",
+          "text": "action.",
+          "start": 9.757,
+          "end": 10.136
+        }
+      ]
+    },
+    {
+      "id": "08",
+      "path": "assets/voice/08.wav",
+      "duration_s": 3.157,
+      "words": [
+        {
+          "id": "word-1",
+          "text": "Patterns",
+          "start": 0.1,
+          "end": 0.531
+        },
+        {
+          "id": "word-2",
+          "text": "may",
+          "start": 0.558,
+          "end": 0.827
+        },
+        {
+          "id": "word-3",
+          "text": "emerge.",
+          "start": 0.854,
+          "end": 1.178
+        },
+        {
+          "id": "word-4",
+          "text": "You",
+          "start": 1.363,
+          "end": 1.632
+        },
+        {
+          "id": "word-5",
+          "text": "decide",
+          "start": 1.659,
+          "end": 1.983
+        },
+        {
+          "id": "word-6",
+          "text": "what",
+          "start": 2.01,
+          "end": 2.279
+        },
+        {
+          "id": "word-7",
+          "text": "they",
+          "start": 2.306,
+          "end": 2.575
+        },
+        {
+          "id": "word-8",
+          "text": "mean.",
+          "start": 2.602,
+          "end": 2.872
+        }
+      ]
+    }
+  ],
+  "sfx": [],
+  "total_duration_s": 69.118
+}

@@ -1,0 +1,402 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Sora";
+      src: url("assets/Sora-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+    }
+
+    @font-face {
+      font-family: "Manrope";
+      src: url("assets/Manrope-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+    }
+
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      color: #0f173d;
+      font-family: "Manrope";
+    }
+
+    .clip {
+      position: absolute;
+      inset: 0;
+    }
+
+    [class~="01-worth-changing-ground"] {
+      background: #f9fafb;
+    }
+
+    [class~="01-worth-changing-stage"] {
+      z-index: 1;
+    }
+
+    [class~="01-worth-changing-grid"] {
+      position: absolute;
+      inset: 54px 96px 220px;
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      grid-template-rows: repeat(8, 85px);
+      column-gap: 24px;
+      row-gap: 18px;
+    }
+
+    [class~="01-worth-changing-window"] {
+      position: relative;
+      grid-column: 2 / 9;
+      grid-row: 3 / 8;
+      overflow: hidden;
+      border: 2px solid #d8e0f2;
+      border-radius: 16px;
+      background: #ffffff;
+      box-shadow: 0 8px 24px rgba(0, 31, 186, 0.07);
+      z-index: 2;
+      will-change: transform, opacity;
+    }
+
+    [class~="01-worth-changing-titlebar"] {
+      position: relative;
+      z-index: 2;
+      height: 82px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 0 38px;
+      border-bottom: 2px solid #d8e0f2;
+      background: #f4f7ff;
+    }
+
+    [class~="01-worth-changing-title"] {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-family: "Sora";
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+    }
+
+    [class~="01-worth-changing-title-icon"] {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      background: #001fba;
+    }
+
+    [class~="01-worth-changing-title-icon"] svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    [class~="01-worth-changing-proof"] {
+      padding: 8px 15px;
+      border-radius: 20px;
+      background: #edf2ff;
+      color: #1238d8;
+      font-size: 18px;
+      font-weight: 500;
+      line-height: 1.4;
+      white-space: nowrap;
+    }
+
+    [class~="01-worth-changing-body"] {
+      position: absolute;
+      inset: 82px 0 0;
+    }
+
+    [class~="01-worth-changing-burst-wrap"] {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+
+    [class~="01-worth-changing-item"] {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: calc(100% - 120px);
+      will-change: transform, opacity;
+    }
+
+    [class~="01-worth-changing-label"] {
+      color: #4e5d85;
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+
+    [class~="01-worth-changing-row"] {
+      height: 70px;
+      display: flex;
+      gap: 14px;
+    }
+
+    [class~="01-worth-changing-field"],
+    [class~="01-worth-changing-menu"] {
+      display: flex;
+      align-items: center;
+      border: 2px solid #d8e0f2;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #0f173d;
+      font-size: 21px;
+      font-weight: 600;
+    }
+
+    [class~="01-worth-changing-field"] {
+      flex: 1;
+      padding: 0 22px;
+    }
+
+    [class~="01-worth-changing-menu"] {
+      width: 142px;
+      justify-content: space-between;
+      padding: 0 18px;
+      color: #1238d8;
+    }
+
+    [class~="01-worth-changing-chevron"] {
+      width: 10px;
+      height: 10px;
+      border-right: 2px solid #1238d8;
+      border-bottom: 2px solid #1238d8;
+      transform: rotate(45deg);
+      margin-top: -5px;
+    }
+
+    [class~="01-worth-changing-status"] {
+      min-height: 60px;
+      display: flex;
+      align-items: center;
+      padding: 0 22px;
+      border: 2px solid #d8e0f2;
+      border-radius: 10px;
+      background: #f4f7ff;
+      color: #4e5d85;
+      font-size: 20px;
+      line-height: 1.45;
+    }
+
+    [class~="01-worth-changing-button"] {
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 13px;
+      border-radius: 8px;
+      background: #001fba;
+      color: #ffffff;
+      font-size: 21px;
+      font-weight: 700;
+      box-shadow: 0 8px 18px rgba(0, 31, 186, 0.16);
+    }
+
+    [class~="01-worth-changing-button-icon"] {
+      width: 22px;
+      height: 22px;
+    }
+
+    [class~="01-worth-changing-hero"] {
+      grid-column: 7 / 13;
+      grid-row: 1 / 4;
+      align-self: center;
+      display: flex;
+      flex-wrap: wrap;
+      align-content: center;
+      column-gap: 0.23em;
+      row-gap: 0.02em;
+      margin: 0;
+      padding: 14px 0 18px 34px;
+      color: #0f173d;
+      font-family: "Sora";
+      font-size: 96px;
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+      z-index: 4;
+    }
+
+    [class~="01-worth-changing-word"] {
+      display: inline-block;
+      will-change: transform, opacity, filter;
+    }
+
+    [class~="01-worth-changing-word-accent"] {
+      color: #001fba;
+    }
+
+    [class~="01-worth-changing-question-rule"] {
+      grid-column: 7 / 9;
+      grid-row: 4;
+      align-self: start;
+      width: 108px;
+      height: 8px;
+      margin: -10px 0 0 34px;
+      border-radius: 20px;
+      background: #00ffbd;
+      transform-origin: left center;
+      z-index: 4;
+      will-change: transform, opacity;
+    }
+
+    [class~="01-worth-changing-cursor"] {
+      grid-column: 8;
+      grid-row: 7;
+      justify-self: end;
+      align-self: center;
+      width: 58px;
+      height: 66px;
+      margin: 8px 10px 0 0;
+      z-index: 8;
+      pointer-events: none;
+      will-change: transform, opacity;
+      filter: drop-shadow(0 6px 8px rgba(15, 23, 61, 0.2));
+    }
+
+    [class~="01-worth-changing-cursor"] svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+  </style>
+
+  <div id="root" data-composition-id="01-worth-changing" data-duration="9.4" data-width="1920" data-height="1080" data-fps="30">
+    <div id="f01-worth-changing-ground" class="clip 01-worth-changing-ground" data-start="0" data-duration="9.4" data-track-index="0"></div>
+
+    <div id="f01-worth-changing-stage" class="clip 01-worth-changing-stage" data-start="0" data-duration="9.4" data-track-index="1">
+      <div class="01-worth-changing-grid">
+        <section class="01-worth-changing-window" aria-label="Weekly Activity Review">
+          <div class="01-worth-changing-titlebar">
+            <div class="01-worth-changing-title">
+              <span class="01-worth-changing-title-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M7 3.5v3M17 3.5v3M4.5 9h15M6.5 5h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+                  <path d="m8.5 14 2 2 4.5-5" stroke="#00ffbd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              <span>Weekly Activity Review</span>
+            </div>
+            <span class="01-worth-changing-proof">Illustrative data</span>
+          </div>
+
+          <div class="01-worth-changing-body">
+            <div class="01-worth-changing-burst-wrap">
+              <div class="01-worth-changing-item 01-worth-changing-label" data-target-x="0" data-target-y="-151">Step 1 - Choose review period</div>
+              <div class="01-worth-changing-item 01-worth-changing-row" data-target-x="0" data-target-y="-86">
+                <div class="01-worth-changing-field">Illustrative Day 5</div>
+                <div class="01-worth-changing-menu">5 days <span class="01-worth-changing-chevron" aria-hidden="true"></span></div>
+              </div>
+              <div class="01-worth-changing-item 01-worth-changing-status" data-target-x="0" data-target-y="10">Ready to create files for Day 1 through Day 5.</div>
+              <div class="01-worth-changing-item 01-worth-changing-button" data-target-x="0" data-target-y="112">
+                <svg class="01-worth-changing-button-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round"/>
+                </svg>
+                <span>Create review files</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <h1 class="01-worth-changing-hero">
+          <span class="01-worth-changing-word" data-word>What</span>
+          <span class="01-worth-changing-word" data-word>is</span>
+          <span class="01-worth-changing-word 01-worth-changing-word-accent" data-word>worth</span>
+          <span class="01-worth-changing-word 01-worth-changing-word-accent" data-word>changing?</span>
+        </h1>
+        <div class="01-worth-changing-question-rule" aria-hidden="true"></div>
+
+        <div class="01-worth-changing-cursor" aria-hidden="true">
+          <svg viewBox="0 0 58 66" fill="none">
+            <path d="M8 5.5 48 40l-19 2.2 10.6 16.6-9.2 5.2L20.1 47 8 60V5.5Z" fill="#001fba" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/gsap.min.js"></script>
+  <script>
+    (() => {
+      const root = document.querySelector('[data-composition-id="01-worth-changing"]');
+      const tl = gsap.timeline({ paused: true });
+      window.__timelines = window.__timelines || {};
+      window.__timelines["01-worth-changing"] = tl;
+
+      const windowEl = root.querySelector('[class~="01-worth-changing-window"]');
+      const titlebar = root.querySelector('[class~="01-worth-changing-titlebar"]');
+      const items = root.querySelectorAll('[class~="01-worth-changing-item"]');
+      const cursorEl = root.querySelector('[class~="01-worth-changing-cursor"]');
+
+      tl.fromTo(windowEl,
+        { opacity: 0, y: 24, scale: 0.985 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.7, ease: "power3.out" },
+        0.04
+      );
+      tl.fromTo(titlebar,
+        { opacity: 0, y: -18 },
+        { opacity: 1, y: 0, duration: 0.62, ease: "power3.out" },
+        0.16
+      );
+
+      items.forEach((item, index) => {
+        tl.fromTo(item,
+          { xPercent: -50, yPercent: -50, x: 0, y: 0, scale: 0.74, opacity: 0 },
+          {
+            x: Number(item.dataset.targetX),
+            y: Number(item.dataset.targetY),
+            scale: 1,
+            opacity: 1,
+            duration: 1.2,
+            ease: "power3.out"
+          },
+          0.3 + index * 0.12
+        );
+      });
+
+      tl.fromTo(cursorEl,
+        { opacity: 0, x: 310, y: 130 },
+        { opacity: 1, x: 0, y: 0, duration: 1.24, ease: "power2.inOut" },
+        0.46
+      );
+
+      const words = Array.from(root.querySelectorAll("[data-word]"));
+      const weights = words.map((word) => 0.5 + word.textContent.length * 0.11);
+      const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+      let usedWeight = 0;
+
+      words.forEach((word, index) => {
+        const start = 2.2 + (usedWeight / totalWeight) * 3.5;
+        tl.fromTo(word,
+          { opacity: 0, x: 44, filter: "blur(10px)" },
+          {
+            opacity: 1,
+            x: 0,
+            filter: "blur(0px)",
+            duration: 0.66 + Math.min(0.24, word.textContent.length * 0.02),
+            ease: "power3.out"
+          },
+          start
+        );
+        usedWeight += weights[index];
+      });
+
+      tl.fromTo(root.querySelector('[class~="01-worth-changing-question-rule"]'),
+        { opacity: 0, scaleX: 0 },
+        { opacity: 1, scaleX: 1, duration: 0.46, ease: "power3.out" },
+        5.34
+      );
+
+      tl.to({ hold: 0 }, { hold: 1, duration: 3, ease: "none" }, 6);
+    })();
+  </script>
+</template>

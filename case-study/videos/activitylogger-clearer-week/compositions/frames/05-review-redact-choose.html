@@ -1,0 +1,524 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Sora";
+      src: url("assets/Sora-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 800;
+    }
+
+    @font-face {
+      font-family: "Manrope";
+      src: url("assets/Manrope-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 200 800;
+    }
+
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      color: #0f173d;
+      font-family: "Manrope", sans-serif;
+    }
+
+    [class~="f05-review-redact-choose-bg"] {
+      position: absolute;
+      inset: 0;
+      background: #f9fafb;
+    }
+
+    [class~="f05-review-redact-choose-stage"] {
+      position: absolute;
+      inset: 0;
+      padding: 48px 96px 184px;
+      box-sizing: border-box;
+    }
+
+    [class~="f05-review-redact-choose-grid"] {
+      display: grid;
+      width: 100%;
+      height: 800px;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      grid-template-rows: repeat(8, minmax(0, 1fr));
+      column-gap: 24px;
+      row-gap: 18px;
+    }
+
+    [class~="f05-review-redact-choose-kicker"] {
+      align-self: center;
+      color: #4e5d85;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+
+    [class~="f05-review-redact-choose-proof"] {
+      align-self: center;
+      justify-self: end;
+      padding: 10px 18px;
+      border-radius: 20px;
+      background: #edf2ff;
+      color: #1238d8;
+      font-size: 18px;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+
+    [class~="f05-review-redact-choose-card"],
+    [class~="f05-review-redact-choose-hero-slot"] {
+      position: relative;
+      box-sizing: border-box;
+      border: 2px solid #d8e0f2;
+      border-radius: 16px;
+      background: #ffffff;
+    }
+
+    [class~="f05-review-redact-choose-card"] {
+      display: flex;
+      flex-direction: column;
+      padding: 48px;
+      box-shadow: 0 8px 24px rgba(0, 31, 186, 0.07);
+      overflow: hidden;
+      will-change: transform, opacity;
+    }
+
+    [class~="f05-review-redact-choose-hero-slot"] {
+      grid-column: 5 / 9;
+      grid-row: 2 / 9;
+      border-color: #d8e0f2;
+      background: #f4f7ff;
+    }
+
+    [class~="f05-review-redact-choose-card-left"] {
+      grid-column: 1 / 5;
+      grid-row: 3 / 8;
+    }
+
+    [class~="f05-review-redact-choose-card-center"] {
+      grid-column: 5 / 9;
+      grid-row: 2 / 9;
+      z-index: 2;
+      padding: 52px;
+      border-color: #009e84;
+    }
+
+    [class~="f05-review-redact-choose-card-right"] {
+      grid-column: 9 / 13;
+      grid-row: 3 / 8;
+    }
+
+    [class~="f05-review-redact-choose-card-head"] {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    [class~="f05-review-redact-choose-step"] {
+      display: grid;
+      width: 58px;
+      height: 58px;
+      flex: 0 0 58px;
+      place-items: center;
+      border-radius: 50%;
+      background: #edf2ff;
+      color: #1238d8;
+      font-family: "Sora", sans-serif;
+      font-size: 25px;
+      font-weight: 800;
+      line-height: 1;
+      will-change: transform, opacity;
+    }
+
+    [class~="f05-review-redact-choose-step-focal"] {
+      background: #f4f7ff;
+      color: #009e84;
+      box-shadow: inset 0 0 0 2px #009e84;
+    }
+
+    [class~="f05-review-redact-choose-step-label"] {
+      color: #4e5d85;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    [class~="f05-review-redact-choose-title"] {
+      margin: 28px 0 0;
+      color: #0f173d;
+      font-family: "Sora", sans-serif;
+      font-size: 40px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      will-change: transform, opacity;
+    }
+
+    [class~="f05-review-redact-choose-title-center"] {
+      max-width: 430px;
+      font-size: 48px;
+    }
+
+    [class~="f05-review-redact-choose-underline"] {
+      display: block;
+      width: 246px;
+      height: 18px;
+      margin-top: 18px;
+      overflow: visible;
+    }
+
+    [class~="f05-review-redact-choose-underline"] path {
+      fill: none;
+      stroke: #009e84;
+      stroke-linecap: round;
+      stroke-width: 7;
+    }
+
+    [class~="f05-review-redact-choose-side-visual"] {
+      display: grid;
+      min-height: 154px;
+      margin-top: auto;
+      place-items: center;
+      border: 2px solid #d8e0f2;
+      border-radius: 10px;
+      background: #f4f7ff;
+      color: #1238d8;
+      will-change: transform, opacity;
+    }
+
+    [class~="f05-review-redact-choose-side-visual"] svg {
+      width: 86px;
+      height: 86px;
+      overflow: visible;
+    }
+
+    [class~="f05-review-redact-choose-side-visual"] path,
+    [class~="f05-review-redact-choose-side-visual"] rect,
+    [class~="f05-review-redact-choose-side-visual"] polyline {
+      fill: none;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 5;
+    }
+
+    [class~="f05-review-redact-choose-side-pill"] {
+      display: inline-flex;
+      align-items: center;
+      align-self: flex-start;
+      gap: 10px;
+      margin-top: 18px;
+      padding: 9px 14px;
+      border-radius: 20px;
+      background: #edf2ff;
+      color: #1238d8;
+      font-size: 18px;
+      font-weight: 500;
+      line-height: 1.4;
+      will-change: transform, opacity;
+    }
+
+    [class~="f05-review-redact-choose-dot"] {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #284ff0;
+    }
+
+    [class~="f05-review-redact-choose-review-ui"] {
+      margin-top: 30px;
+      padding: 22px;
+      border: 2px solid #d8e0f2;
+      border-radius: 10px;
+      background: #f4f7ff;
+      will-change: transform, opacity;
+    }
+
+    [class~="f05-review-redact-choose-review-top"] {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+
+    [class~="f05-review-redact-choose-review-name"] {
+      color: #4e5d85;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    [class~="f05-review-redact-choose-review-tag"] {
+      padding: 7px 12px;
+      border-radius: 20px;
+      background: #edf2ff;
+      color: #1238d8;
+      font-size: 16px;
+      font-weight: 500;
+    }
+
+    [class~="f05-review-redact-choose-review-lines"] {
+      display: grid;
+      gap: 14px;
+    }
+
+    [class~="f05-review-redact-choose-review-line"] {
+      height: 13px;
+      border-radius: 8px;
+      background: #d8e0f2;
+    }
+
+    [class~="f05-review-redact-choose-review-line-short"] {
+      width: 72%;
+    }
+
+    [class~="f05-review-redact-choose-redaction"] {
+      width: 56%;
+      height: 16px;
+      border-radius: 8px;
+      background: #0f173d;
+      will-change: transform, opacity;
+    }
+
+    [class~="f05-review-redact-choose-review-actions"] {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 22px;
+    }
+
+    [class~="f05-review-redact-choose-redacted"] {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: #4e5d85;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    [class~="f05-review-redact-choose-redacted"] span:first-child {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border-radius: 50%;
+      background: #009e84;
+      color: #0f173d;
+      font-size: 17px;
+      line-height: 1;
+    }
+
+    [class~="f05-review-redact-choose-choice"] {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      color: #1238d8;
+    }
+
+    [class~="f05-review-redact-choose-choice"] svg {
+      width: 70px;
+      height: 70px;
+    }
+
+    [class~="f05-review-redact-choose-choice"] path,
+    [class~="f05-review-redact-choose-choice"] polyline {
+      fill: none;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 5;
+    }
+
+    [class~="f05-review-redact-choose-choice-copy"] {
+      display: grid;
+      gap: 5px;
+    }
+
+    [class~="f05-review-redact-choose-choice-name"] {
+      color: #0f173d;
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    [class~="f05-review-redact-choose-choice-proof"] {
+      color: #4e5d85;
+      font-size: 18px;
+      font-weight: 500;
+    }
+  </style>
+
+  <div id="root" data-composition-id="05-review-redact-choose" data-duration="14" data-width="1920" data-height="1080" data-fps="30">
+    <div id="f05-review-redact-choose-bg" class="clip f05-review-redact-choose-bg" data-start="0" data-duration="14" data-track-index="0"></div>
+
+    <div id="f05-review-redact-choose-stage" class="clip f05-review-redact-choose-stage" data-start="0" data-duration="14" data-track-index="1">
+      <div class="f05-review-redact-choose-grid">
+        <div id="f05-review-redact-choose-kicker" class="f05-review-redact-choose-kicker" style="grid-column: 1 / 5; grid-row: 1;">A controlled review</div>
+        <div id="f05-review-redact-choose-proof" class="f05-review-redact-choose-proof" style="grid-column: 10 / 13; grid-row: 1;">Illustrative data</div>
+
+        <div id="f05-review-redact-choose-hero-slot" class="f05-review-redact-choose-hero-slot"></div>
+
+        <section id="f05-review-redact-choose-step-1" class="f05-review-redact-choose-card f05-review-redact-choose-card-left">
+          <div class="f05-review-redact-choose-card-head">
+            <div id="f05-review-redact-choose-step-1-number" class="f05-review-redact-choose-step">1</div>
+            <span class="f05-review-redact-choose-step-label">Prepare</span>
+          </div>
+          <h2 id="f05-review-redact-choose-step-1-title" class="f05-review-redact-choose-title">ActivityLogger prepares</h2>
+          <div id="f05-review-redact-choose-step-1-visual" class="f05-review-redact-choose-side-visual" aria-hidden="true">
+            <svg viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg">
+              <path d="M27 10h28l16 16v58H27z" />
+              <path d="M55 10v18h16" />
+              <path d="M38 47h22M38 59h22M38 71h15" />
+            </svg>
+          </div>
+          <div id="f05-review-redact-choose-step-1-pill" class="f05-review-redact-choose-side-pill"><span class="f05-review-redact-choose-dot"></span>Local files</div>
+        </section>
+
+        <section id="f05-review-redact-choose-step-2" class="f05-review-redact-choose-card f05-review-redact-choose-card-center">
+          <div class="f05-review-redact-choose-card-head">
+            <div id="f05-review-redact-choose-step-2-number" class="f05-review-redact-choose-step f05-review-redact-choose-step-focal">2</div>
+            <span class="f05-review-redact-choose-step-label">Your review</span>
+          </div>
+          <h2 id="f05-review-redact-choose-step-2-title" class="f05-review-redact-choose-title f05-review-redact-choose-title-center">You review and redact</h2>
+          <svg class="f05-review-redact-choose-underline" viewBox="0 0 246 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path id="f05-review-redact-choose-underline-path" d="M5 9 C64 5 125 13 241 8" />
+          </svg>
+          <div id="f05-review-redact-choose-review-ui" class="f05-review-redact-choose-review-ui">
+            <div class="f05-review-redact-choose-review-top">
+              <span class="f05-review-redact-choose-review-name">Review copy</span>
+              <span class="f05-review-redact-choose-review-tag">Illustrative data</span>
+            </div>
+            <div class="f05-review-redact-choose-review-lines" aria-hidden="true">
+              <div class="f05-review-redact-choose-review-line"></div>
+              <div id="f05-review-redact-choose-redaction" class="f05-review-redact-choose-redaction"></div>
+              <div class="f05-review-redact-choose-review-line f05-review-redact-choose-review-line-short"></div>
+            </div>
+            <div class="f05-review-redact-choose-review-actions">
+              <div class="f05-review-redact-choose-redacted"><span>✓</span><span>Redacted</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="f05-review-redact-choose-step-3" class="f05-review-redact-choose-card f05-review-redact-choose-card-right">
+          <div class="f05-review-redact-choose-card-head">
+            <div id="f05-review-redact-choose-step-3-number" class="f05-review-redact-choose-step">3</div>
+            <span class="f05-review-redact-choose-step-label">Choose</span>
+          </div>
+          <h2 id="f05-review-redact-choose-step-3-title" class="f05-review-redact-choose-title">You choose a trusted tool</h2>
+          <div id="f05-review-redact-choose-step-3-visual" class="f05-review-redact-choose-side-visual">
+            <div class="f05-review-redact-choose-choice">
+              <svg viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M40 8 65 18v20c0 17-10 28-25 34C25 66 15 55 15 38V18z" />
+                <polyline points="28,39 36,47 53,29" />
+              </svg>
+              <div class="f05-review-redact-choose-choice-copy">
+                <span class="f05-review-redact-choose-choice-name">Trusted tool</span>
+                <span class="f05-review-redact-choose-choice-proof">Selected by you</span>
+              </div>
+            </div>
+          </div>
+          <div id="f05-review-redact-choose-step-3-pill" class="f05-review-redact-choose-side-pill"><span class="f05-review-redact-choose-dot"></span>Your choice</div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const prefix = "f05-review-redact-choose-";
+      const el = (name) => document.getElementById(prefix + name);
+      const underline = el("underline-path");
+      const underlineLength = underline.getTotalLength();
+      underline.style.strokeDasharray = String(underlineLength);
+      underline.style.strokeDashoffset = String(underlineLength);
+
+      const timeline = gsap.timeline({ paused: true });
+      window.__timelines["05-review-redact-choose"] = timeline;
+
+      timeline.fromTo(el("kicker"),
+        { opacity: 0, y: 12 },
+        { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" },
+        0.1);
+      timeline.fromTo(el("hero-slot"),
+        { opacity: 0, scale: 0.98 },
+        { opacity: 1, scale: 1, duration: 0.4, ease: "power2.out" },
+        0.1);
+
+      timeline.fromTo(el("step-1"),
+        { opacity: 0, x: -56, y: 18, scale: 0.96 },
+        { opacity: 1, x: 0, y: 0, scale: 1, duration: 1.25, ease: "power3.out" },
+        0.18);
+      timeline.fromTo(el("step-1-number"),
+        { opacity: 0, scale: 0 },
+        { opacity: 1, scale: 1, duration: 0.55, ease: "power3.out" },
+        0.46);
+      timeline.fromTo(el("step-1-title"),
+        { opacity: 0, y: 18 },
+        { opacity: 1, y: 0, duration: 0.7, ease: "power2.out" },
+        1.25);
+      timeline.fromTo(el("step-1-visual"),
+        { opacity: 0, y: 20, scale: 0.96 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.8, ease: "power3.out" },
+        2.0);
+      timeline.fromTo(el("step-1-pill"),
+        { opacity: 0, x: -18 },
+        { opacity: 1, x: 0, duration: 0.65, ease: "power2.out" },
+        2.75);
+
+      timeline.fromTo(el("step-2"),
+        { opacity: 0, y: 16, scale: 0.92 },
+        { opacity: 1, y: 0, scale: 1, duration: 1.1, ease: "power3.out" },
+        3.5);
+      timeline.fromTo(el("step-2-number"),
+        { opacity: 0, scale: 0 },
+        { opacity: 1, scale: 1, duration: 0.55, ease: "power3.out" },
+        3.9);
+      timeline.fromTo(el("step-2-title"),
+        { opacity: 0, y: 18 },
+        { opacity: 1, y: 0, duration: 0.75, ease: "power2.out" },
+        4.35);
+      timeline.to(underline,
+        { strokeDashoffset: 0, duration: 0.75, ease: "power2.out" },
+        5.2);
+      timeline.fromTo(el("review-ui"),
+        { opacity: 0, y: 22, scale: 0.97 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.9, ease: "power3.out" },
+        5.85);
+      timeline.fromTo(el("redaction"),
+        { opacity: 0, scaleX: 0, transformOrigin: "0% 50%" },
+        { opacity: 1, scaleX: 1, duration: 0.7, ease: "power2.out" },
+        6.65);
+
+      timeline.fromTo(el("step-3"),
+        { opacity: 0, x: 56, y: 18, scale: 0.96 },
+        { opacity: 1, x: 0, y: 0, scale: 1, duration: 1.25, ease: "power3.out" },
+        7.5);
+      timeline.fromTo(el("step-3-number"),
+        { opacity: 0, scale: 0 },
+        { opacity: 1, scale: 1, duration: 0.55, ease: "power3.out" },
+        7.85);
+      timeline.fromTo(el("step-3-title"),
+        { opacity: 0, y: 18 },
+        { opacity: 1, y: 0, duration: 0.7, ease: "power2.out" },
+        8.55);
+      timeline.fromTo(el("step-3-visual"),
+        { opacity: 0, y: 20, scale: 0.96 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.85, ease: "power3.out" },
+        9.35);
+      timeline.fromTo(el("step-3-pill"),
+        { opacity: 0, x: 18 },
+        { opacity: 1, x: 0, duration: 0.65, ease: "power2.out" },
+        10.55);
+      timeline.fromTo(el("proof"),
+        { opacity: 0, y: 10 },
+        { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" },
+        11.5);
+
+      timeline.to({}, { duration: 1.9 }, 12.1);
+    })();
+  </script>
+</template>

@@ -1,0 +1,647 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Sora";
+      src: url("assets/Sora-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+    }
+
+    @font-face {
+      font-family: "Manrope";
+      src: url("assets/Manrope-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 200 800;
+    }
+
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      color: #0f173d;
+      font-family: "Manrope";
+      isolation: isolate;
+    }
+
+    #root *,
+    #root *::before,
+    #root *::after {
+      box-sizing: border-box;
+    }
+
+    #root button {
+      color: inherit;
+      font: inherit;
+    }
+
+    [id="f07-signal-stops-ground"] {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: #f9fafb;
+      z-index: 0;
+    }
+
+    [id="f07-signal-stops-field"] {
+      position: absolute;
+      top: 94px;
+      right: 54px;
+      width: 840px;
+      height: 770px;
+      border: 2px solid #d8e0f2;
+      border-radius: 42px;
+      background: #f4f7ff;
+    }
+
+    [id="f07-signal-stops-rule"] {
+      position: absolute;
+      top: 112px;
+      left: 96px;
+      width: 72px;
+      height: 8px;
+      border-radius: 8px;
+      background: #00ffbd;
+    }
+
+    [id="f07-signal-stops-stage"] {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+    }
+
+    [id="f07-signal-stops-title"] {
+      position: absolute;
+      top: 72px;
+      left: 750px;
+      width: 910px;
+      margin: 0;
+      font-family: "Sora";
+      font-size: 88px;
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+    }
+
+    [id="f07-signal-stops-title"] span {
+      color: #284ff0;
+    }
+
+    [id="f07-signal-stops-result"] {
+      position: absolute;
+      top: 260px;
+      left: 96px;
+      width: 590px;
+      height: 432px;
+      padding: 48px;
+      border: 2px solid #d8e0f2;
+      border-radius: 16px;
+      background: #ffffff;
+      box-shadow: 0 8px 24px rgba(0, 31, 186, 0.07);
+      transform-origin: 50% 50%;
+    }
+
+    [id="f07-signal-stops-result-label"],
+    [id="f07-signal-stops-ui-label"] {
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.35;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: #4e5d85;
+    }
+
+    [id="f07-signal-stops-result-icon"] {
+      display: grid;
+      place-items: center;
+      width: 68px;
+      height: 68px;
+      margin-top: 42px;
+      border-radius: 20px;
+      background: #edf2ff;
+      color: #1238d8;
+    }
+
+    [id="f07-signal-stops-result-icon"] svg {
+      width: 34px;
+      height: 34px;
+    }
+
+    [id="f07-signal-stops-result-title"] {
+      max-width: 430px;
+      margin: 26px 0 0;
+      font-family: "Sora";
+      font-size: 40px;
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+    }
+
+    [id="f07-signal-stops-result-detail"] {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      height: 52px;
+      margin-top: 30px;
+      padding: 0 18px;
+      border: 2px solid #d8e0f2;
+      border-radius: 10px;
+      background: #f4f7ff;
+    }
+
+    [id="f07-signal-stops-result-detail"] i {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #284ff0;
+    }
+
+    [id="f07-signal-stops-result-detail"] b,
+    [id="f07-signal-stops-result-detail"] em {
+      display: block;
+      height: 8px;
+      border-radius: 8px;
+      background: #d8e0f2;
+    }
+
+    [id="f07-signal-stops-result-detail"] b {
+      width: 188px;
+    }
+
+    [id="f07-signal-stops-result-detail"] em {
+      width: 92px;
+      margin-left: auto;
+      background: #b9c8f6;
+    }
+
+    [id="f07-signal-stops-path-label"] {
+      position: absolute;
+      top: 350px;
+      left: 752px;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 46px;
+      padding: 0 18px;
+      border: 2px solid #d8e0f2;
+      border-radius: 20px;
+      background: #ffffff;
+      box-shadow: 0 8px 24px rgba(0, 31, 186, 0.07);
+      color: #0f173d;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    [id="f07-signal-stops-path-label"] i {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #009e84;
+    }
+
+    [id="f07-signal-stops-path-svg"] {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 896px;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    [id="f07-signal-stops-human-path"] {
+      fill: none;
+      stroke: #009e84;
+      stroke-width: 8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    [id="f07-signal-stops-review"] {
+      position: absolute;
+      top: 150px;
+      left: 1128px;
+      width: 696px;
+      height: 690px;
+      overflow: hidden;
+      border: 2px solid #d8e0f2;
+      border-radius: 16px;
+      background: #ffffff;
+      box-shadow: 0 18px 48px rgba(0, 31, 186, 0.13);
+      transform-origin: 50% 50%;
+    }
+
+    [id="f07-signal-stops-titlebar"] {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 74px;
+      padding: 0 34px;
+      border-bottom: 2px solid #d8e0f2;
+      background: #ffffff;
+    }
+
+    [id="f07-signal-stops-product"] {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-family: "Sora";
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    [id="f07-signal-stops-step"] {
+      padding: 7px 12px;
+      border-radius: 20px;
+      background: #edf2ff;
+      color: #1238d8;
+      font-family: "Manrope";
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    [id="f07-signal-stops-illustrative"] {
+      padding: 8px 12px;
+      border: 2px solid #d8e0f2;
+      border-radius: 20px;
+      color: #4e5d85;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    [id="f07-signal-stops-ui-body"] {
+      padding: 30px 42px 34px;
+    }
+
+    [id="f07-signal-stops-ui-label"] {
+      margin: 0 0 14px 2px;
+    }
+
+    [id="f07-signal-stops-menu-head"] {
+      position: relative;
+      z-index: 4;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      height: 76px;
+      padding: 0 24px;
+      border: 2px solid #b9c8f6;
+      border-radius: 10px;
+      background: #f4f7ff;
+      text-align: left;
+      cursor: default;
+      transform-origin: 50% 50%;
+    }
+
+    [id="f07-signal-stops-menu-head"] strong {
+      font-family: "Sora";
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+    }
+
+    [id="f07-signal-stops-menu-head"] svg {
+      width: 24px;
+      height: 24px;
+      color: #1238d8;
+    }
+
+    [id="f07-signal-stops-menu-ripple"] {
+      position: absolute;
+      top: -8px;
+      left: 252px;
+      z-index: -1;
+      width: 92px;
+      height: 92px;
+      border: 3px solid #009e84;
+      border-radius: 50%;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    [id="f07-signal-stops-expand-mask"] {
+      position: relative;
+      z-index: 3;
+      height: 228px;
+      overflow: hidden;
+    }
+
+    [id="f07-signal-stops-expand-sheet"] {
+      height: 228px;
+      padding: 10px;
+      border: 2px solid #b9c8f6;
+      border-top: 0;
+      border-radius: 0 0 10px 10px;
+      background: #ffffff;
+      box-shadow: 0 16px 32px rgba(0, 31, 186, 0.12);
+      will-change: transform;
+    }
+
+    [id="f07-signal-stops-expand-sheet"] button {
+      position: relative;
+      display: flex;
+      align-items: center;
+      width: 100%;
+      height: 64px;
+      padding: 0 18px;
+      border: 2px solid transparent;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #0f173d;
+      font-size: 20px;
+      font-weight: 600;
+      text-align: left;
+      cursor: default;
+      transform-origin: 50% 50%;
+    }
+
+    [id="f07-signal-stops-choice-check"] {
+      display: grid;
+      flex: 0 0 auto;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      margin-left: auto;
+      border-radius: 50%;
+      background: #284ff0;
+      color: #ffffff;
+    }
+
+    [id="f07-signal-stops-choice-check"] svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    [id="f07-signal-stops-below"] {
+      position: relative;
+      z-index: 2;
+      margin-top: 22px;
+      will-change: transform;
+    }
+
+    [id="f07-signal-stops-press-stage"] {
+      position: relative;
+      width: 100%;
+      height: 74px;
+    }
+
+    [id="f07-signal-stops-save-burst"] {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      border-radius: 10px;
+      background: #00cfac;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    [id="f07-signal-stops-save"] {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      width: 100%;
+      height: 74px;
+      border: 0;
+      border-radius: 8px;
+      background: #001fba;
+      box-shadow: 0 12px 24px rgba(0, 31, 186, 0.24);
+      color: #ffffff !important;
+      font-size: 22px;
+      font-weight: 700;
+      cursor: default;
+      transform-origin: 50% 50%;
+    }
+
+    [id="f07-signal-stops-save"] svg {
+      width: 24px;
+      height: 24px;
+      color: #ffffff !important;
+    }
+
+    [id="f07-signal-stops-save"] span {
+      color: #ffffff !important;
+    }
+
+    [id="f07-signal-stops-status"] {
+      display: flex;
+      align-items: center;
+      min-height: 50px;
+      margin-top: 14px;
+      padding: 0 4px;
+      color: #1238d8;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    [id="f07-signal-stops-status-icon"] {
+      display: grid;
+      flex: 0 0 auto;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      margin-right: 12px;
+      border-radius: 50%;
+      background: #edf2ff;
+      color: #1238d8;
+    }
+
+    [id="f07-signal-stops-status-icon"] svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    [id="f07-signal-stops-cursor"] {
+      position: absolute;
+      top: 452px;
+      left: 1038px;
+      z-index: 20;
+      width: 42px;
+      height: 52px;
+      color: #0f173d;
+      pointer-events: none;
+      transform-origin: 4px 4px;
+      filter: drop-shadow(0 5px 5px rgba(15, 23, 61, 0.2));
+    }
+
+    [id="f07-signal-stops-cursor"] svg {
+      width: 42px;
+      height: 52px;
+      overflow: visible;
+    }
+  </style>
+
+  <div id="root" data-composition-id="07-signal-stops" data-duration="12.4" data-width="1920" data-height="1080" data-fps="30">
+    <div id="f07-signal-stops-ground" class="clip" data-start="0" data-duration="12.4" data-track-index="0" aria-hidden="true">
+      <div id="f07-signal-stops-field"></div>
+      <div id="f07-signal-stops-rule"></div>
+    </div>
+
+    <main id="f07-signal-stops-stage" class="clip" data-start="0" data-duration="12.4" data-track-index="1" aria-label="A person reviews and saves a suggested result">
+      <h1 id="f07-signal-stops-title">You <span>decide</span></h1>
+
+      <section id="f07-signal-stops-result" aria-labelledby="f07-signal-stops-result-label f07-signal-stops-result-title">
+        <div id="f07-signal-stops-result-label">Trusted review tool chosen by you</div>
+        <div id="f07-signal-stops-result-icon" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="7" y="6" width="18" height="20" rx="2" stroke="currentColor" stroke-width="2.5"/>
+            <path d="M11 12h10M11 17h7M11 22h9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h2 id="f07-signal-stops-result-title">The same update appears on three days</h2>
+        <div id="f07-signal-stops-result-detail" aria-hidden="true"><i></i><b></b><em></em></div>
+      </section>
+
+      <div id="f07-signal-stops-path-label"><i aria-hidden="true"></i>Human review</div>
+      <svg id="f07-signal-stops-path-svg" viewBox="0 0 1920 896" role="img" aria-labelledby="f07-signal-stops-path-title f07-signal-stops-path-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="f07-signal-stops-path-title">Human review</title>
+        <desc id="f07-signal-stops-path-desc">A short line stops before the Review Center control.</desc>
+        <path id="f07-signal-stops-human-path" d="M 686 468 C 766 394 866 524 1034 462"/>
+      </svg>
+
+      <section id="f07-signal-stops-review" aria-label="Review Center, Step 3">
+        <header id="f07-signal-stops-titlebar">
+          <div id="f07-signal-stops-product">Review Center <span id="f07-signal-stops-step">Step 3</span></div>
+          <span id="f07-signal-stops-illustrative">Illustrative data</span>
+        </header>
+
+        <div id="f07-signal-stops-ui-body">
+          <div id="f07-signal-stops-ui-label">Choose a result</div>
+          <div id="f07-signal-stops-expander">
+            <button id="f07-signal-stops-menu-head" type="button" aria-haspopup="menu" aria-expanded="false">
+              <strong>Choose a result</strong>
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span id="f07-signal-stops-menu-ripple"></span>
+            </button>
+
+            <div id="f07-signal-stops-expand-mask" data-layout-allow-overflow>
+              <div id="f07-signal-stops-expand-sheet" role="menu" aria-label="Review result choices">
+                <button id="f07-signal-stops-choice-found" type="button" role="menuitem">
+                  Found an idea to try
+                  <span id="f07-signal-stops-choice-check" aria-hidden="true">
+                    <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="m5 10 3 3 7-7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </span>
+                </button>
+                <button id="f07-signal-stops-choice-tried" type="button" role="menuitem">Tried a change</button>
+                <button id="f07-signal-stops-choice-none" type="button" role="menuitem">No action</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="f07-signal-stops-below">
+            <div id="f07-signal-stops-press-stage">
+              <div id="f07-signal-stops-save-burst" aria-hidden="true"></div>
+              <button id="f07-signal-stops-save" type="button">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M5 4h12l2 2v14H5V4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                  <path d="M8 4v6h8V4M8 20v-6h8v6" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                </svg>
+                <span>Save review result</span>
+              </button>
+            </div>
+            <div id="f07-signal-stops-status" role="status" aria-live="polite">
+              <span id="f07-signal-stops-status-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="m5 10 3 3 7-7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+              <span id="f07-signal-stops-status-text">Review result saved locally.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div id="f07-signal-stops-cursor" aria-hidden="true">
+        <svg viewBox="0 0 42 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M4 3 35 30l-14 2 8 13-8 4-8-14-9 10V3Z" fill="#ffffff" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
+        </svg>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    (() => {
+      const byId = (id) => document.getElementById(id);
+      const humanPath = byId("f07-signal-stops-human-path");
+      const pathLength = humanPath.getTotalLength();
+      humanPath.style.strokeDasharray = `${pathLength}`;
+      humanPath.style.strokeDashoffset = `${pathLength}`;
+
+      const result = byId("f07-signal-stops-result");
+      const title = byId("f07-signal-stops-title");
+      const review = byId("f07-signal-stops-review");
+      const pathLabel = byId("f07-signal-stops-path-label");
+      const cursor = byId("f07-signal-stops-cursor");
+      const menuHead = byId("f07-signal-stops-menu-head");
+      const menuRipple = byId("f07-signal-stops-menu-ripple");
+      const expandSheet = byId("f07-signal-stops-expand-sheet");
+      const below = byId("f07-signal-stops-below");
+      const choiceFound = byId("f07-signal-stops-choice-found");
+      const choiceCheck = byId("f07-signal-stops-choice-check");
+      const choiceRows = [
+        choiceFound,
+        byId("f07-signal-stops-choice-tried"),
+        byId("f07-signal-stops-choice-none"),
+      ];
+      const save = byId("f07-signal-stops-save");
+      const saveBurst = byId("f07-signal-stops-save-burst");
+      const statusIcon = byId("f07-signal-stops-status-icon");
+      const statusText = byId("f07-signal-stops-status-text");
+
+      gsap.set(menuRipple, { scale: 0, opacity: 0 });
+
+      const tl = gsap.timeline({ paused: true });
+      window.__timelines = window.__timelines || {};
+      window.__timelines["07-signal-stops"] = tl;
+
+      tl.fromTo(result, { opacity: 0, scale: 0.92, x: -24 }, { opacity: 1, scale: 1, x: 0, duration: 0.65, ease: "power3.out" }, 0);
+      tl.fromTo(review, { opacity: 0, scale: 0.96, y: 18 }, { opacity: 1, scale: 1, y: 0, duration: 0.7, ease: "power3.out" }, 0.12);
+      tl.fromTo(title, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.65, ease: "power3.out" }, 1.35);
+
+      tl.fromTo(cursor, { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.4, ease: "power3.out" }, 2.88);
+      tl.fromTo(pathLabel, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 3.0);
+      tl.to(humanPath, { strokeDashoffset: 0, duration: 1.6, ease: "power2.out" }, 3.2);
+
+      tl.to(cursor, { x: 438, y: -112, duration: 0.72, ease: "power2.inOut" }, 5.2);
+      tl.to(cursor, { scale: 0.86, duration: 0.08, ease: "power2.in" }, 5.96);
+      tl.to(menuHead, { scale: 0.96, duration: 0.08, ease: "power2.in" }, 5.96);
+      tl.to(cursor, { scale: 1, duration: 0.12, ease: "power2.out" }, 6.04);
+      tl.to(menuHead, { scale: 1, duration: 0.12, ease: "power2.out" }, 6.04);
+      tl.fromTo(menuRipple, { scale: 0, opacity: 0.72 }, { scale: 3.2, opacity: 0, duration: 0.64, ease: "power2.out", immediateRender: false }, 6.02);
+      tl.set(menuHead, { attr: { "aria-expanded": "true" } }, 6.18);
+      tl.fromTo(expandSheet, { y: -228, opacity: 0 }, { y: 0, opacity: 1, duration: 0.55, ease: "power3.out" }, 6.18);
+      tl.set(below, { y: -228, opacity: 0 }, 0);
+      tl.set(below, { y: 0, opacity: 1 }, 6.73);
+      tl.fromTo(choiceRows, { opacity: 0 }, { opacity: 1, duration: 0.25, stagger: 0.06, ease: "power2.out" }, 6.32);
+
+      tl.to(cursor, { x: 414, y: -34, duration: 0.42, ease: "power2.inOut" }, 6.86);
+      tl.to(cursor, { scale: 0.88, duration: 0.08, ease: "power2.in" }, 7.34);
+      tl.to(choiceFound, { scale: 0.97, duration: 0.08, ease: "power2.in" }, 7.34);
+      tl.to(cursor, { scale: 1, duration: 0.12, ease: "power2.out" }, 7.42);
+      tl.to(choiceFound, { scale: 1, backgroundColor: "#edf2ff", borderColor: "#284ff0", duration: 0.2, ease: "power2.out" }, 7.42);
+      tl.fromTo(choiceCheck, { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power3.out" }, 7.45);
+
+      tl.to(cursor, { x: 438, y: 202, duration: 0.62, ease: "power2.inOut" }, 8.2);
+      tl.to(cursor, { scale: 0.86, duration: 0.12, ease: "power1.in" }, 8.86);
+      tl.to(save, { scale: 0.96, boxShadow: "0 4px 10px rgba(0, 31, 186, 0.2)", duration: 0.12, ease: "power1.in" }, 8.86);
+      tl.to(cursor, { scale: 1, duration: 0.18, ease: "power2.out" }, 8.98);
+      tl.to(save, { scale: 1, boxShadow: "0 12px 24px rgba(0, 31, 186, 0.24)", duration: 0.52, ease: "power3.out" }, 8.98);
+      tl.fromTo(saveBurst, { scale: 1, opacity: 0 }, { scale: 2.8, opacity: 0.34, duration: 0.48, ease: "power2.out" }, 8.98);
+      tl.to(saveBurst, { opacity: 0, duration: 0.46, ease: "power2.in" }, 9.28);
+
+      tl.set(statusText, { opacity: 0, y: 6 }, 0);
+      tl.set(statusIcon, { opacity: 0, scale: 0 }, 0);
+      tl.set(statusText, { opacity: 1, y: 0 }, 9.42);
+      tl.set(statusIcon, { opacity: 1, scale: 1 }, 9.42);
+      tl.set(save, { opacity: 0 }, 11.1);
+    })();
+  </script>
+</template>

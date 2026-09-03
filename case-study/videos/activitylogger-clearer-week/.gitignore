@@ -1,0 +1,9 @@
+node_modules/
+renders/
+snapshots/
+.thumbnails/
+.media/
+.hyperframes/anim-map/
+.hyperframes/frame-packets/
+.DS_Store
+*.log

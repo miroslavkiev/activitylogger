@@ -1,6 +1,20 @@
 # HyperFrames production plan
 
-This plan starts only after one storyboard is selected. The current case study stops at the script and storyboard gate.
+Option 3, Clearer Week, was selected and built as a 90-second HyperFrames project.
+
+## Current build
+
+- Project: `case-study/videos/activitylogger-clearer-week`
+- Review render: `renders/activitylogger-clearer-week-review-1080p.mp4`
+- HyperFrames: 0.8.27
+- Review format: 1920x1080 at 30 fps
+- Verified media: 90 seconds, 2,700 H.264 frames, BT.709, stereo AAC at 48 kHz
+- SHA-256: `996c9dd340e7c1197ab00df898c37ed581bddf78735730a8274f7440c3021c5a`
+- Narration: local Kokoro `am_michael`, reused from the existing installation
+- Music and effects: none
+- Captions: 166 exact script words, timed from the rendered clip lengths, plus SRT
+- Final hold: captions clear before 85.3 seconds and the still frame holds to 90 seconds
+- Master plan: make the native 3840x2160 master after review feedback is closed
 
 ## Production boundary
 
@@ -73,18 +87,18 @@ The proposal storyboards set `sfx: none` so draft prose cannot be treated as a s
 
 ## Build order
 
-1. Select one option.
-2. Write the confirmed `BRIEF.md` for that option.
-3. Initialize one clean HyperFrames project and pin its version.
-4. Copy the selected storyboard and script into that project.
-5. Build static wireframe compositions with the real screen words.
-6. Review a contact sheet and correct layout before motion.
-7. Test two voice samples and lock one voice.
-8. Generate and measure the final narration.
-9. Add motion, one frame at a time, using the storyboard cues.
-10. Inspect every frame midpoint and both sides of every cut.
-11. Preview the full film and get render approval.
-12. Render the native master and reduced-motion version from the same source.
+1. Select one option. Complete.
+2. Write the confirmed `BRIEF.md` for that option. Complete.
+3. Initialize one clean HyperFrames project and pin its version. Complete.
+4. Copy the selected storyboard and script into that project. Complete.
+5. Build static wireframe compositions with the real screen words. Complete.
+6. Review a contact sheet and correct layout before motion. Complete.
+7. Test voice samples and lock one voice. Complete.
+8. Generate and measure the final narration. Complete.
+9. Add motion, one frame at a time, using the storyboard cues. Complete.
+10. Inspect every frame midpoint and both sides of every cut. Complete.
+11. Render and review the 1920x1080 film. Render complete, ready for user review.
+12. Render the native master and reduced-motion version from the same source. After review.
 
 ## QA gate
 

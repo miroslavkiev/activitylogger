@@ -1,0 +1,111 @@
+1
+00:00:00,100 --> 00:00:02,313
+At the end of a busy week, the
+
+2
+00:00:02,313 --> 00:00:04,917
+hardest question can be the simplest: what is
+
+3
+00:00:04,917 --> 00:00:05,697
+worth changing?
+
+4
+00:00:09,100 --> 00:00:11,038
+Start with what was observed.
+
+5
+00:00:11,127 --> 00:00:14,065
+Choose five consecutive completed calendar days.
+
+6
+00:00:14,153 --> 00:00:16,941
+Each one must pass its checks before the
+
+7
+00:00:16,941 --> 00:00:18,092
+review can begin.
+
+8
+00:00:20,100 --> 00:00:22,971
+Behind that moment is a quiet trail in
+
+9
+00:00:22,971 --> 00:00:26,560
+daily Markdown, including app and window context, typing
+
+10
+00:00:26,560 --> 00:00:29,426
+and hotkeys, clicks, and clipboard changes.
+
+11
+00:00:32,100 --> 00:00:34,439
+The files are sensitive plaintext.
+
+12
+00:00:34,537 --> 00:00:38,055
+Configured secure apps, secure fields, and manual pause
+
+13
+00:00:38,055 --> 00:00:39,665
+make capture step back.
+
+14
+00:00:39,763 --> 00:00:42,831
+There are no screenshots, audio, or video.
+
+15
+00:00:44,100 --> 00:00:46,583
+ActivityLogger prepares the review files.
+
+16
+00:00:46,666 --> 00:00:48,499
+You review and redact them.
+
+17
+00:00:48,582 --> 00:00:51,359
+Then you choose a trusted tool to look
+
+18
+00:00:51,359 --> 00:00:54,462
+for repeated work, friction, and possible errors.
+
+19
+00:00:58,100 --> 00:01:01,195
+A careful review can link each possible pattern
+
+20
+00:01:01,195 --> 00:01:03,042
+to its day and context.
+
+21
+00:01:03,126 --> 00:01:05,627
+Work spans are not exact time records.
+
+22
+00:01:05,712 --> 00:01:06,903
+Gaps stay unknown.
+
+23
+00:01:10,100 --> 00:01:12,526
+Your chosen review tool can suggest.
+
+24
+00:01:12,623 --> 00:01:13,880
+It cannot decide.
+
+25
+00:01:13,977 --> 00:01:16,898
+You may try one small idea, record a
+
+26
+00:01:16,898 --> 00:01:20,256
+result in ActivityLogger, or choose no action.
+
+27
+00:01:22,100 --> 00:01:23,298
+Patterns may emerge.
+
+28
+00:01:23,363 --> 00:01:24,992
+You decide what they mean.

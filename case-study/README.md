@@ -1,12 +1,10 @@
 # ActivityLogger film case study
 
-Status: three script and storyboard proposals for review. No video has been built or rendered.
+Status: Option 3 was selected. The 90-second HyperFrames review film is rendered and verified.
 
 ## Recommendation
 
-Start with **Option 2, The Work Between**. It gives the clearest problem and payoff without sounding like an advert. It shows a repeated task, a possible pattern, and one small change chosen by the person.
-
-Choose **Option 1, Quiet Signal** when the strongest Apple presentation feel matters most. Choose **Option 3, Clearer Week** when the film should use the Ciklum visual system.
+The selected direction is **Option 3, Clearer Week**. It uses the Ciklum visual system while keeping ActivityLogger ownership and product claims separate.
 
 ## Options
 
@@ -14,7 +12,7 @@ Choose **Option 1, Quiet Signal** when the strongest Apple presentation feel mat
 |---|---:|---|---|---|
 | [Quiet Signal](01-quiet-signal/STORYBOARD.md) | 84 seconds | Recognition | Dark, sparse, camera-led, based on the ActivityLogger icon | Product reveal, website hero, event opener |
 | [The Work Between](02-the-work-between/STORYBOARD.md) | 90 seconds | Practical test | Light editorial field, repeated actions, amber selection mark | Main product film, case study, demo introduction |
-| [Clearer Week](03-clearer-week/STORYBOARD.md) | 90 seconds | Agency | Ciklum blue and teal system, evidence relay, human choice | Unbranded Ciklum-style concept or internal direction test |
+| [Clearer Week](03-clearer-week/STORYBOARD.md) | 90 seconds | Agency | Ciklum blue and teal system, evidence relay, human choice | Selected and built |
 
 ## Shared brief
 
@@ -23,7 +21,7 @@ Choose **Option 1, Quiet Signal** when the strongest Apple presentation feel mat
 - Tone: positive, useful, calm, and honest. No hype, fear, or hard sell.
 - Format: 16:9, planned at 1920x1080 and 30 fps.
 - Method: HyperFrames only. All motion is authored with HTML, SVG, CSS for styling, and one paused seek-safe GSAP timeline per composition.
-- Review state: collaborative. Pick one option before any frame build or render.
+- Review state: the selected film is ready to watch and comment on.
 
 ## What each option includes
 
@@ -34,6 +32,12 @@ Choose **Option 1, Quiet Signal** when the strongest Apple presentation feel mat
 - A shared [research and claim register](RESEARCH.md)
 - A shared [HyperFrames production and QA plan](PRODUCTION.md)
 
-## Choice gate
+## Selected build
 
-Pick `1`, `2`, or `3`. The next stage should make static HyperFrames storyboard frames for the selected option, test two short voice samples, and return a contact sheet before full motion work.
+- Source project: [ActivityLogger Clearer Week](videos/activitylogger-clearer-week/)
+- Review video: [1080p MP4](videos/activitylogger-clearer-week/renders/activitylogger-clearer-week-review-1080p.mp4)
+- Runtime: HyperFrames 0.8.27, 1920x1080, 30 fps
+- Voice: local Kokoro `am_michael`
+- Sound: narration only, with no background music or effects
+- Captions: open captions and [SRT captions](videos/activitylogger-clearer-week/captions.srt)
+- Privacy: no real logs, private review files, screenshots, or cloud media were used

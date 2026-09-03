@@ -1,0 +1,185 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Sora";
+      src: url("assets/Sora-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      color: #0F173D;
+      font-family: "Sora";
+    }
+
+    #root * {
+      box-sizing: border-box;
+    }
+
+    [class~="f08-what-it-means-ground"] {
+      position: absolute;
+      inset: 0;
+      background: #F9FAFB;
+    }
+
+    [class~="f08-what-it-means-content"] {
+      position: absolute;
+      inset: 0;
+    }
+
+    [class~="f08-what-it-means-grid"] {
+      position: absolute;
+      top: 54px;
+      right: 96px;
+      bottom: 184px;
+      left: 96px;
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      grid-template-rows: repeat(8, minmax(0, 1fr));
+      column-gap: 24px;
+    }
+
+    [class~="f08-what-it-means-icon-wrap"] {
+      grid-column: 1 / 3;
+      grid-row: 3 / 6;
+      align-self: center;
+      justify-self: start;
+      width: 204px;
+      height: 204px;
+      transform-origin: 50% 50%;
+    }
+
+    [class~="f08-what-it-means-icon"] {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    [class~="f08-what-it-means-hero"] {
+      grid-column: 3 / 11;
+      grid-row: 3 / 7;
+      align-self: center;
+      margin: 0;
+      font-size: 96px;
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+    }
+
+    [class~="f08-what-it-means-line"] {
+      display: flex;
+      align-items: baseline;
+      min-height: 1.05em;
+      white-space: nowrap;
+    }
+
+    [class~="f08-what-it-means-opening"] {
+      display: inline-block;
+      transform-origin: 0 50%;
+    }
+
+    [class~="f08-what-it-means-tail"] {
+      gap: 0.22em;
+    }
+
+    [class~="f08-what-it-means-word-clip"] {
+      display: inline-block;
+      overflow: hidden;
+      padding: 0.04em 0.03em 0.08em 0;
+      margin-bottom: -0.08em;
+    }
+
+    [class~="f08-what-it-means-word"] {
+      display: inline-block;
+    }
+
+    [class~="f08-what-it-means-period"] {
+      display: inline-block;
+      width: 22px;
+      height: 22px;
+      margin-left: -0.05em;
+      border-radius: 50%;
+      background: #00FFBD;
+      transform-origin: 50% 50%;
+    }
+  </style>
+
+  <div id="root" data-composition-id="08-what-it-means" data-duration="8" data-width="1920" data-height="1080" data-fps="30">
+    <div id="f08-what-it-means-ground" class="clip f08-what-it-means-ground" data-start="0" data-duration="8" data-track-index="0"></div>
+    <div id="f08-what-it-means-content" class="clip f08-what-it-means-content" data-start="0" data-duration="8" data-track-index="1">
+      <div class="f08-what-it-means-grid">
+        <div id="f08-what-it-means-icon-wrap" class="f08-what-it-means-icon-wrap">
+          <img class="f08-what-it-means-icon" src="assets/activitylogger-icon-source.png" alt="ActivityLogger">
+        </div>
+        <h1 class="f08-what-it-means-hero" aria-label="You decide what they mean.">
+          <span class="f08-what-it-means-line">
+            <span id="f08-what-it-means-opening" class="f08-what-it-means-opening" aria-hidden="true">You decide</span>
+          </span>
+          <span class="f08-what-it-means-line f08-what-it-means-tail" aria-hidden="true">
+            <span class="f08-what-it-means-word-clip"><span id="f08-what-it-means-word-what" class="f08-what-it-means-word">what</span></span>
+            <span class="f08-what-it-means-word-clip"><span id="f08-what-it-means-word-they" class="f08-what-it-means-word">they</span></span>
+            <span class="f08-what-it-means-word-clip"><span id="f08-what-it-means-word-mean" class="f08-what-it-means-word">mean</span></span>
+            <span id="f08-what-it-means-period" class="f08-what-it-means-period" aria-hidden="true"></span>
+          </span>
+        </h1>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/gsap.min.js"></script>
+  <script>
+    (() => {
+      window.__timelines = window.__timelines || {};
+      const timeline = gsap.timeline({ paused: true });
+      const icon = document.getElementById("f08-what-it-means-icon-wrap");
+      const opening = document.getElementById("f08-what-it-means-opening");
+      const period = document.getElementById("f08-what-it-means-period");
+      const content = [
+        { element: document.getElementById("f08-what-it-means-word-what"), text: "what" },
+        { element: document.getElementById("f08-what-it-means-word-they"), text: "they" },
+        { element: document.getElementById("f08-what-it-means-word-mean"), text: "mean" }
+      ];
+      let revealAt = 1.5;
+      const sequence = content.map((item) => {
+        const start = revealAt;
+        revealAt += 0.14 + item.text.length * 0.045;
+        return { ...item, start };
+      });
+
+      timeline.fromTo(
+        icon,
+        { autoAlpha: 0, scale: 0.94 },
+        { autoAlpha: 1, scale: 1, duration: 0.82, ease: "power3.out" },
+        0.08
+      );
+      timeline.fromTo(
+        opening,
+        { autoAlpha: 0, scale: 0.97, x: 16 },
+        { autoAlpha: 1, scale: 1, x: 0, duration: 0.96, ease: "power3.out" },
+        0.16
+      );
+      sequence.forEach((item) => {
+        timeline.fromTo(
+          item.element,
+          { autoAlpha: 0, x: 38 },
+          { autoAlpha: 1, x: 0, duration: 0.54, ease: "power3.out" },
+          item.start
+        );
+      });
+      timeline.fromTo(
+        period,
+        { autoAlpha: 0, scale: 0.25 },
+        { autoAlpha: 1, scale: 1, duration: 0.44, ease: "power3.out" },
+        2.72
+      );
+
+      window.__timelines["08-what-it-means"] = timeline;
+    })();
+  </script>
+</template>

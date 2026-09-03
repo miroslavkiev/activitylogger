@@ -1,0 +1,40 @@
+{
+  "provider": "kokoro",
+  "speed": 1,
+  "lines": [
+    {
+      "id": "01",
+      "text": "At the end of a busy week, the hardest question can be the simplest: what is worth changing?"
+    },
+    {
+      "id": "02",
+      "text": "Start with what was observed. Choose five consecutive completed calendar days. Each one must pass its checks before the review can begin."
+    },
+    {
+      "id": "03",
+      "text": "Behind that moment is a quiet trail in daily Markdown, including app and window context, typing and hotkeys, clicks, and clipboard changes."
+    },
+    {
+      "id": "04",
+      "text": "The files are sensitive plaintext. Configured secure apps, secure fields, and manual pause make capture step back. There are no screenshots, audio, or video."
+    },
+    {
+      "id": "05",
+      "text": "ActivityLogger prepares the review files. You review and redact them. Then you choose a trusted tool to look for repeated work, friction, and possible errors."
+    },
+    {
+      "id": "06",
+      "text": "A careful review can link each possible pattern to its day and context. Work spans are not exact time records. Gaps stay unknown."
+    },
+    {
+      "id": "07",
+      "text": "Your chosen review tool can suggest. It cannot decide. You may try one small idea, record a result in ActivityLogger, or choose no action."
+    },
+    {
+      "id": "08",
+      "text": "Patterns may emerge. You decide what they mean."
+    }
+  ],
+  "bgm": null,
+  "voice": "am_michael"
+}

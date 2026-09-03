@@ -1,0 +1,457 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Sora";
+      src: url("assets/Sora-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+    }
+
+    @font-face {
+      font-family: "Manrope";
+      src: url("assets/Manrope-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+    }
+
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      color: #0F173D;
+      font-family: "Manrope";
+    }
+
+    #root [data-role="background"] {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      background: #001FBA;
+    }
+
+    #root [data-role="stage"] {
+      position: absolute;
+      inset: 0 0 auto 0;
+      z-index: 1;
+      height: 896px;
+      overflow: hidden;
+    }
+
+    #root [data-role="scope-title"] {
+      position: absolute;
+      top: 84px;
+      left: 242px;
+      width: 1436px;
+      min-height: 76px;
+      margin: 0;
+      color: #FFFFFF;
+      font-family: "Sora";
+      font-size: 66px;
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    #root [data-role="review-window"] {
+      position: absolute;
+      top: 256px;
+      left: 242px;
+      width: 1436px;
+      height: 560px;
+      overflow: hidden;
+      border: 2px solid #D8E0F2;
+      border-radius: 16px;
+      background: #FFFFFF;
+      box-shadow: 0 8px 24px rgba(0, 31, 186, 0.07);
+      transform-origin: 50% 50%;
+      will-change: transform, opacity;
+    }
+
+    #root [data-role="titlebar"] {
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 86px;
+      padding: 0 60px;
+      border-bottom: 2px solid #D8E0F2;
+      background: #F4F7FF;
+    }
+
+    #root [data-role="window-title"] {
+      font-family: "Sora";
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+    }
+
+    #root [data-role="data-label"] {
+      padding: 9px 18px;
+      border-radius: 20px;
+      background: #EDF2FF;
+      color: #1238D8;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    #root [data-role="window-body"] {
+      box-sizing: border-box;
+      height: 474px;
+      padding: 34px 60px;
+    }
+
+    #root [data-role="control-row"] {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 230px;
+      gap: 18px;
+      height: 78px;
+    }
+
+    #root [data-role="field"],
+    #root [data-role="menu"] {
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      height: 78px;
+      border: 2px solid #D8E0F2;
+      border-radius: 10px;
+      background: #FFFFFF;
+      color: #0F173D;
+      font-size: 24px;
+      line-height: 1.2;
+      will-change: transform, opacity;
+    }
+
+    #root [data-role="field"] {
+      padding: 0 26px;
+    }
+
+    #root [data-role="field"] strong {
+      margin-left: 9px;
+      font-weight: 700;
+    }
+
+    #root [data-role="field-icon"] {
+      position: relative;
+      display: grid;
+      width: 34px;
+      height: 34px;
+      margin-right: 16px;
+      place-items: center;
+      border-radius: 8px;
+      background: #EDF2FF;
+      color: #1238D8;
+    }
+
+    #root [data-role="field-icon"]::before {
+      box-sizing: border-box;
+      width: 18px;
+      height: 17px;
+      border: 2px solid #1238D8;
+      border-radius: 3px;
+      content: "";
+    }
+
+    #root [data-role="field-icon"]::after {
+      position: absolute;
+      top: 11px;
+      left: 9px;
+      width: 16px;
+      height: 2px;
+      background: #1238D8;
+      content: "";
+    }
+
+    #root [data-role="menu"] {
+      justify-content: space-between;
+      padding: 0 24px;
+      color: #1238D8;
+      font-weight: 700;
+    }
+
+    #root [data-role="chevron"] {
+      width: 11px;
+      height: 11px;
+      border-right: 2px solid #1238D8;
+      border-bottom: 2px solid #1238D8;
+      rotate: 45deg;
+      margin: -6px 4px 0 0;
+    }
+
+    #root [data-role="status"] {
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      height: 64px;
+      min-width: 100%;
+      margin-top: 14px;
+      padding: 0 24px;
+      border: 2px solid #D8E0F2;
+      border-radius: 10px;
+      background: #EDF2FF;
+      color: #1238D8;
+      font-size: 21px;
+      font-weight: 500;
+      line-height: 1.4;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    #root [data-role="status-icon"] {
+      position: relative;
+      box-sizing: border-box;
+      flex: 0 0 auto;
+      width: 26px;
+      height: 26px;
+      margin-right: 14px;
+      border: 3px solid #284FF0;
+      border-radius: 50%;
+      background: #FFFFFF;
+    }
+
+    #root [data-role="status-icon"]::after {
+      position: absolute;
+      top: 4px;
+      left: 7px;
+      width: 6px;
+      height: 11px;
+      border-right: 3px solid #FFFFFF;
+      border-bottom: 3px solid #FFFFFF;
+      rotate: 45deg;
+      content: "";
+    }
+
+    #root [data-role="status-copy"] {
+      position: relative;
+      display: block;
+      width: 760px;
+      height: 30px;
+    }
+
+    #root [data-role="status-copy"] > span {
+      position: absolute;
+      inset: 0;
+    }
+
+    #root [data-role="button-wrap"] {
+      position: relative;
+      width: 350px;
+      height: 64px;
+      margin-top: 14px;
+      will-change: transform, opacity;
+    }
+
+    #root [data-role="button-focus"] {
+      position: absolute;
+      inset: -6px;
+      border: 4px solid #00FFBD;
+      border-radius: 12px;
+      transform-origin: 50% 50%;
+      will-change: transform, opacity;
+    }
+
+    #root [data-role="create-button"] {
+      position: relative;
+      z-index: 1;
+      width: 350px;
+      height: 64px;
+      border: 2px solid #D8E0F2;
+      border-radius: 8px;
+      background: #F4F7FF;
+      color: #6F7CA1;
+      font-family: "Manrope";
+      font-size: 21px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    #root [data-role="coverage"] {
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      min-height: 78px;
+      margin-top: 18px;
+      padding: 17px 24px;
+      border: 2px solid #D8E0F2;
+      border-radius: 10px;
+      background: #F4F7FF;
+      color: #4E5D85;
+      font-size: 20px;
+      font-weight: 500;
+      line-height: 1.4;
+      will-change: transform, opacity;
+    }
+
+    #root [data-role="coverage-mark"] {
+      flex: 0 0 auto;
+      width: 6px;
+      height: 42px;
+      margin-right: 18px;
+      border-radius: 20px;
+      background: #284FF0;
+    }
+
+    #root [data-role="coverage-text"] {
+      min-height: 28px;
+      white-space: nowrap;
+    }
+
+    #root [data-role="cursor"] {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 5;
+      width: 44px;
+      height: 56px;
+      filter: drop-shadow(0 6px 8px rgba(15, 23, 61, 0.24));
+      pointer-events: none;
+      will-change: transform, opacity;
+    }
+  </style>
+
+  <div id="root" data-composition-id="02-ready-window" data-duration="11" data-width="1920" data-height="1080" data-fps="30">
+    <div id="f02-ready-window-background" class="clip" data-role="background" data-start="0" data-duration="11" data-track-index="0"></div>
+
+    <div data-role="stage">
+      <h1 data-role="scope-title">5 consecutive completed calendar days</h1>
+
+      <section data-role="review-window" aria-label="Weekly Activity Review">
+        <header data-role="titlebar">
+          <span data-role="window-title">Weekly Activity Review</span>
+          <span data-role="data-label">Illustrative data</span>
+        </header>
+
+        <div data-role="window-body">
+          <div data-role="control-row">
+            <div data-role="field" aria-label="End date: Illustrative Day 5">
+              <span data-role="field-icon" aria-hidden="true"></span>
+              <span>End date:<strong>Illustrative Day 5</strong></span>
+            </div>
+            <div data-role="menu" aria-label="5 days">
+              <span>5 days</span>
+              <span data-role="chevron" aria-hidden="true"></span>
+            </div>
+          </div>
+
+          <div data-role="status" role="status" aria-live="polite">
+            <span data-role="status-icon" aria-hidden="true"></span>
+            <span data-role="status-copy">
+              <span data-role="status-checking">Checking selected days...</span>
+              <span data-role="status-ready">Ready to create files for Day 1 through Day 5.</span>
+            </span>
+          </div>
+
+          <div data-role="button-wrap">
+            <span data-role="button-focus" aria-hidden="true"></span>
+            <button data-role="create-button" type="button" disabled aria-disabled="true">Create review files</button>
+          </div>
+
+          <div data-role="coverage">
+            <span data-role="coverage-mark" aria-hidden="true"></span>
+            <span data-role="coverage-text">File checks do not prove that every activity was captured.</span>
+          </div>
+        </div>
+      </section>
+
+      <svg data-role="cursor" viewBox="0 0 44 56" aria-hidden="true">
+        <path d="M5 3 L37 31 L23 33 L31 49 L21 54 L13 37 L4 46 Z" fill="#001FBA" stroke="#FFFFFF" stroke-width="4" stroke-linejoin="round"></path>
+      </svg>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const root = document.querySelector('[data-composition-id="02-ready-window"]');
+      const title = root.querySelector('[data-role="scope-title"]');
+      const reviewWindow = root.querySelector('[data-role="review-window"]');
+      const field = root.querySelector('[data-role="field"]');
+      const menu = root.querySelector('[data-role="menu"]');
+      const status = root.querySelector('[data-role="status"]');
+      const statusChecking = root.querySelector('[data-role="status-checking"]');
+      const statusReady = root.querySelector('[data-role="status-ready"]');
+      const statusIcon = root.querySelector('[data-role="status-icon"]');
+      const buttonWrap = root.querySelector('[data-role="button-wrap"]');
+      const button = root.querySelector('[data-role="create-button"]');
+      const buttonFocus = root.querySelector('[data-role="button-focus"]');
+      const coverage = root.querySelector('[data-role="coverage"]');
+      const cursor = root.querySelector('[data-role="cursor"]');
+
+      const tl = gsap.timeline({ paused: true });
+      window.__timelines = window.__timelines || {};
+      window.__timelines["02-ready-window"] = tl;
+
+      tl.set(button, { disabled: true, attr: { "aria-disabled": "true" } }, 0);
+      tl.set(button, { disabled: false, attr: { "aria-disabled": "false" } }, 6);
+
+      tl.fromTo(title,
+        { y: 18, opacity: 0, clipPath: "inset(0 100% 0 0)" },
+        { y: 0, opacity: 1, clipPath: "inset(0 0% 0 0)", duration: 0.72, ease: "power3.out" },
+        0.08
+      );
+
+      tl.fromTo(reviewWindow,
+        { scale: 0, opacity: 0, y: 12 },
+        { scale: 1, opacity: 1, y: 0, duration: 0.65, ease: "power3.out" },
+        2.8
+      );
+
+      tl.fromTo(field,
+        { y: 14, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.46, ease: "power3.out" },
+        3.28
+      );
+      tl.fromTo(menu,
+        { y: 14, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.46, ease: "power3.out" },
+        3.56
+      );
+      tl.fromTo(buttonWrap,
+        { y: 14, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.46, ease: "power3.out" },
+        3.86
+      );
+      tl.fromTo(status,
+        { y: 14, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.46, ease: "power3.out" },
+        4.18
+      );
+
+      tl.fromTo(cursor,
+        { x: 1710, y: 734, opacity: 0 },
+        { x: 1470, y: 398, opacity: 1, duration: 0.72, ease: "power3.out" },
+        4.52
+      );
+      tl.to(cursor, { x: 930, y: 484, duration: 0.72, ease: "power2.inOut" }, 5.28);
+
+      tl.set(statusReady, { opacity: 0 }, 0);
+      tl.set(statusChecking, { opacity: 0 }, 6);
+      tl.set(statusReady, { opacity: 1 }, 6);
+
+      tl.fromTo(statusIcon,
+        { backgroundColor: "#FFFFFF" },
+        { backgroundColor: "#284FF0", duration: 0.28, ease: "power2.out" },
+        6
+      );
+      tl.set(button, { backgroundColor: "#001FBA", borderColor: "#001FBA", color: "#FFFFFF" }, 6);
+      tl.to(cursor, { x: 615, y: 565, duration: 0.88, ease: "power2.inOut" }, 6.2);
+      tl.fromTo(buttonFocus,
+        { scale: 0, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.58, ease: "power3.out" },
+        6.92
+      );
+
+      tl.fromTo(coverage,
+        { y: 12, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.5, ease: "power3.out" },
+        8
+      );
+    })();
+  </script>
+</template>

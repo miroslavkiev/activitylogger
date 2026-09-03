@@ -1,0 +1,372 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Sora";
+      src: url("assets/Sora-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+    }
+
+    @font-face {
+      font-family: "Manrope";
+      src: url("assets/Manrope-Variable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+    }
+
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      color: #0f173d;
+      font-family: "Manrope";
+      box-sizing: border-box;
+    }
+
+    #root *,
+    #root *::before,
+    #root *::after {
+      box-sizing: border-box;
+    }
+
+    [class~="f06-evidence-with-limits-bg"] {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      background: #f9fafb;
+    }
+
+    [class~="f06-evidence-with-limits-stage"] {
+      position: absolute;
+      top: 54px;
+      left: 96px;
+      z-index: 1;
+      width: 1728px;
+      height: 756px;
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      grid-template-rows: 50px 680px;
+      column-gap: 24px;
+      row-gap: 26px;
+    }
+
+    [id="f06-evidence-with-limits-tag"] {
+      grid-column: 1 / 4;
+      grid-row: 1;
+      align-self: start;
+      justify-self: start;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 44px;
+      padding: 10px 20px;
+      border-radius: 20px;
+      background: #edf2ff;
+      color: #1238d8;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      transform-origin: 0% 50%;
+      will-change: transform, opacity;
+    }
+
+    [class~="f06-evidence-with-limits-tag-dot"] {
+      width: 10px;
+      height: 10px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: #284ff0;
+    }
+
+    [id="f06-evidence-with-limits-finding"] {
+      grid-column: 1 / 8;
+      grid-row: 2;
+      height: 680px;
+      padding: 60px;
+      border: 2px solid #d8e0f2;
+      border-radius: 16px;
+      background: #ffffff;
+      box-shadow: 0 8px 24px rgba(0, 31, 186, 0.07);
+      transform-origin: 50% 50%;
+      will-change: transform, opacity;
+    }
+
+    [class~="f06-evidence-with-limits-label"] {
+      color: #4e5d85;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    [class~="f06-evidence-with-limits-title"] {
+      max-width: 860px;
+      margin: 24px 0 0;
+      font-family: "Sora";
+      font-size: 68px;
+      font-weight: 700;
+      line-height: 1.12;
+      letter-spacing: -0.025em;
+      color: #0f173d;
+    }
+
+    [class~="f06-evidence-with-limits-sources"] {
+      display: flex;
+      gap: 14px;
+      height: 82px;
+      margin-top: 52px;
+    }
+
+    [class~="f06-evidence-with-limits-source"] {
+      position: relative;
+      flex: 1 1 0;
+      min-width: 0;
+      height: 82px;
+      transform-origin: 50% 50%;
+      will-change: transform, opacity;
+    }
+
+    [class~="f06-evidence-with-limits-source-outgoing"],
+    [class~="f06-evidence-with-limits-source-incoming"] {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 18px;
+      border: 2px solid #d8e0f2;
+      border-radius: 20px;
+      background: #f4f7ff;
+      color: #1238d8;
+      font-size: 18px;
+      white-space: nowrap;
+      transform-origin: 50% 50%;
+      will-change: transform, opacity;
+    }
+
+    [class~="f06-evidence-with-limits-source-incoming"] {
+      z-index: 2;
+      justify-content: space-between;
+      background: #edf2ff;
+    }
+
+    [class~="f06-evidence-with-limits-source-incoming"] strong {
+      font-weight: 700;
+    }
+
+    [class~="f06-evidence-with-limits-source-incoming"] span {
+      color: #4e5d85;
+      font-weight: 500;
+    }
+
+    [id="f06-evidence-with-limits-mask"] {
+      grid-column: 8 / 13;
+      grid-row: 2;
+      height: 680px;
+      overflow: hidden;
+      border-radius: 16px;
+    }
+
+    [id="f06-evidence-with-limits-sheet"] {
+      width: 100%;
+      height: 680px;
+      padding: 60px;
+      border: 2px solid #001fba;
+      border-radius: 16px;
+      background: #001fba;
+      color: #ffffff;
+      will-change: transform;
+    }
+
+    [class~="f06-evidence-with-limits-limit-label"] {
+      color: #ffffff;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    [id="f06-evidence-with-limits-limit-title"] {
+      min-height: 116px;
+      margin: 26px 0 0;
+      font-family: "Sora";
+      font-size: 48px;
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      color: #ffffff;
+    }
+
+    [id="f06-evidence-with-limits-limit-body"] {
+      min-height: 104px;
+      margin: 18px 0 0;
+      color: #ffffff;
+      font-size: 30px;
+      font-weight: 400;
+      line-height: 1.45;
+    }
+
+    [id="f06-evidence-with-limits-linked-mark"] {
+      width: 18px;
+      height: 18px;
+      margin-top: 42px;
+      border-radius: 50%;
+      background: #00ffbd;
+      transform-origin: 50% 50%;
+      will-change: transform, opacity;
+    }
+
+    [id="f06-evidence-with-limits-linked"] {
+      margin: 24px 0 0;
+      color: #ffffff;
+      font-size: 30px;
+      font-weight: 500;
+      line-height: 1.45;
+      transform-origin: 0% 50%;
+      will-change: transform, opacity;
+    }
+  </style>
+
+  <div id="root" data-composition-id="06-evidence-with-limits" data-duration="12" data-width="1920" data-height="1080" data-fps="30">
+    <div id="f06-evidence-with-limits-bg" class="clip f06-evidence-with-limits-bg" data-start="0" data-duration="12" data-track-index="0"></div>
+
+    <div class="f06-evidence-with-limits-stage">
+      <div id="f06-evidence-with-limits-tag">
+        <span class="f06-evidence-with-limits-tag-dot"></span>
+        <span>Illustrative data</span>
+      </div>
+
+      <section id="f06-evidence-with-limits-finding" aria-label="Possible pattern">
+        <div class="f06-evidence-with-limits-label">Possible pattern</div>
+        <h1 class="f06-evidence-with-limits-title">A repeated review step may be worth checking.</h1>
+
+        <div class="f06-evidence-with-limits-sources" aria-label="Source contexts">
+          <div id="f06-evidence-with-limits-source-1" class="f06-evidence-with-limits-source">
+            <div id="f06-evidence-with-limits-source-1-day" class="f06-evidence-with-limits-source-outgoing">Day 1</div>
+            <div id="f06-evidence-with-limits-source-1-full" class="f06-evidence-with-limits-source-incoming"><strong>Day 1</strong><span>- update</span></div>
+          </div>
+          <div id="f06-evidence-with-limits-source-3" class="f06-evidence-with-limits-source">
+            <div id="f06-evidence-with-limits-source-3-day" class="f06-evidence-with-limits-source-outgoing">Day 3</div>
+            <div id="f06-evidence-with-limits-source-3-full" class="f06-evidence-with-limits-source-incoming"><strong>Day 3</strong><span>- update</span></div>
+          </div>
+          <div id="f06-evidence-with-limits-source-5" class="f06-evidence-with-limits-source">
+            <div id="f06-evidence-with-limits-source-5-day" class="f06-evidence-with-limits-source-outgoing">Day 5</div>
+            <div id="f06-evidence-with-limits-source-5-full" class="f06-evidence-with-limits-source-incoming"><strong>Day 5</strong><span>- update</span></div>
+          </div>
+        </div>
+      </section>
+
+      <div id="f06-evidence-with-limits-mask" data-layout-allow-overflow>
+        <aside id="f06-evidence-with-limits-sheet" aria-label="Limits stay visible">
+          <div class="f06-evidence-with-limits-limit-label" data-layout-allow-occlusion>Limits stay visible</div>
+          <h2 id="f06-evidence-with-limits-limit-title">Not exact time</h2>
+          <p id="f06-evidence-with-limits-limit-body">Unknown gaps stay unknown.</p>
+          <div id="f06-evidence-with-limits-linked-mark"></div>
+          <p id="f06-evidence-with-limits-linked">Day and context linked</p>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/gsap.min.js"></script>
+  <script>
+    (() => {
+      const frame = document.querySelector('[data-composition-id="06-evidence-with-limits"]');
+      const byId = (id) => document.getElementById(id);
+      const timeline = gsap.timeline({ paused: true });
+
+      timeline.fromTo(
+        byId("f06-evidence-with-limits-tag"),
+        { opacity: 0, y: -8, scale: 0.96 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.3, ease: "power3.out" },
+        0
+      );
+
+      timeline.fromTo(
+        byId("f06-evidence-with-limits-finding"),
+        { opacity: 0, y: 10, scale: 0.9 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.62, ease: "power3.out" },
+        0.18
+      );
+
+      const sourceContent = [
+        { key: "1", label: "Day 1 - update" },
+        { key: "3", label: "Day 3 - update" },
+        { key: "5", label: "Day 5 - update" }
+      ];
+      let sourceCursor = 3.2;
+      const sourceTimeline = sourceContent.map((entry) => {
+        const duration = 0.28 + entry.label.length * 0.008;
+        const timed = { ...entry, start: sourceCursor, end: sourceCursor + duration };
+        sourceCursor += duration;
+        return timed;
+      });
+
+      sourceTimeline.forEach((entry) => {
+        const wrap = byId(`f06-evidence-with-limits-source-${entry.key}`);
+        const outgoing = byId(`f06-evidence-with-limits-source-${entry.key}-day`);
+        const incoming = byId(`f06-evidence-with-limits-source-${entry.key}-full`);
+        const swapAt = entry.start + 0.24;
+
+        timeline.fromTo(
+          wrap,
+          { opacity: 0, y: 10, scale: 0.9 },
+          { opacity: 1, y: 0, scale: 1, duration: 0.34, ease: "power3.out" },
+          entry.start
+        );
+        timeline.to(
+          outgoing,
+          { opacity: 0, scale: 0.74, duration: 0.32, ease: "power2.in" },
+          swapAt
+        );
+        timeline.fromTo(
+          incoming,
+          { opacity: 0, scale: 0.74 },
+          { opacity: 1, scale: 1, duration: 0.5, ease: "power3.out" },
+          swapAt + 0.17
+        );
+      });
+
+      timeline.fromTo(
+        byId("f06-evidence-with-limits-sheet"),
+        { x: -706 },
+        { x: 0, duration: 0.58, ease: "power3.out" },
+        5.1
+      );
+
+      const limitTitle = byId("f06-evidence-with-limits-limit-title");
+      const limitBody = byId("f06-evidence-with-limits-limit-body");
+      timeline.fromTo(
+        limitTitle,
+        { opacity: 0, y: 8 },
+        { opacity: 1, y: 0, duration: 0.38, ease: "power3.out" },
+        5.48
+      );
+      timeline.fromTo(
+        limitBody,
+        { opacity: 0, y: 8 },
+        { opacity: 1, y: 0, duration: 0.38, ease: "power3.out" },
+        7.72
+      );
+
+      timeline.fromTo(
+        byId("f06-evidence-with-limits-linked-mark"),
+        { opacity: 0, scale: 0 },
+        { opacity: 1, scale: 1, duration: 0.34, ease: "power3.out" },
+        8.8
+      );
+      timeline.fromTo(
+        byId("f06-evidence-with-limits-linked"),
+        { opacity: 0, y: 8, scale: 0.96 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.48, ease: "power3.out" },
+        8.9
+      );
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["06-evidence-with-limits"] = timeline;
+    })();
+  </script>
+</template>
