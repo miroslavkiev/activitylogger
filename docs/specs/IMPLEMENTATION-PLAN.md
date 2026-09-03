@@ -1,10 +1,12 @@
-# ActivityLogger implementation and deployment closeout
+# ActivityLogger version 4.1.0 implementation and deployment closeout
 
-**Status:** source, signed deployment, lifecycle, and live capture closeout complete.
+**Record date:** 2026-08-21
 
-This plan supersedes the historical F0 through F6 build order. Current contracts live in [`00-MASTER.md`](00-MASTER.md) and the individual feature specifications.
+**Status:** historical F0 through F6 closeout. This file does not cover later v2 logging, private weekly packs, or Review Center work. See [`IMPL-STATUS.md`](IMPL-STATUS.md) for current acceptance status.
 
-## Completed source phases
+This record closed the original F0 through F6 build order for version 4.1.0. Current contracts live in [`00-MASTER.md`](00-MASTER.md) and the individual feature specifications.
+
+## Completed source phases at this closeout
 
 1. Enforced fail-closed privacy across synchronous callbacks and asynchronous generation-guarded work.
 2. Added bounded queues, buffers, Accessibility traversal, diagnostics, retry loops, and stateful deadline waits.
@@ -32,7 +34,7 @@ python3.11 -m venv .venv
 
 Regenerate `requirements.txt` only with `./scripts/compile_requirements.sh` on the supported macOS Apple silicon environment.
 
-## Production migration status
+## Production migration status at this closeout
 
 - [x] Confirmed `dist/ActivityLoggerNative.app` and the private mode `600` legacy PKCS#12.
 - [x] Imported the identity with `./scripts/setup_signing_identity.sh --import-p12 .codesign/identity.p12` through native SecurityAgent prompts.
@@ -54,10 +56,10 @@ The build script creates a private staging directory, builds and signs an onedir
 
 Keep FileVault enabled. Daily logs and compacted files are private plaintext with indefinite retention. There is no automatic deletion. Review and redact compacted output before external LLM use. Archive and delete only through an operator-managed, verified procedure.
 
-## Completion result
+## Completion result at this closeout
 
-Source lifecycle and signed deployment verification are complete. The final source suite passed all 335 tests, and the strict deployed codesign test passed separately after the final rebuild. Ruff critical rules, dependency consistency, strict dependency audit, shell and plist validation, byte compilation, diff checks, and forbidden-dash scans passed.
+Source lifecycle and signed deployment verification were complete for version 4.1.0. The final source suite passed all 335 tests, and the strict deployed codesign test passed separately after the final rebuild. Ruff critical rules, dependency consistency, strict dependency audit, shell and plist validation, byte compilation, diff checks, and forbidden-dash scans passed.
 
-Production runtime closeout passed: the rebuilt and config-restarted exact-path native processes were proved fresh and stable, the Launch Agent is running with the corrected policy, and the daily log updated after real typing. Bounded security-log review found no enforcement event for the final process.
+Production runtime closeout passed at that time: the rebuilt and config-restarted exact-path native processes were proved fresh and stable, the Launch Agent ran with the corrected policy, and the daily log updated after real typing. Bounded security-log review found no enforcement event for the final process.
 
 The unchecked recovery-identity disposition is an explicit operator decision and is not a deployment gate.

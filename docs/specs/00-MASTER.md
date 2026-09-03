@@ -1,6 +1,6 @@
 # ActivityLogger master specification
 
-**Status:** implemented, source-verified, and live-deployment verified on 2026-08-21.
+**Status:** current contract for ActivityLogger 4.5.1. See [`IMPL-STATUS.md`](IMPL-STATUS.md) for the latest accepted source and live deployment proof.
 
 This document is the cross-feature contract. [`00-SCOPE.md`](00-SCOPE.md) owns product bounds, [`F2-config.md`](F2-config.md) owns config keys, and [`docs/MACOS_TCC.md`](../MACOS_TCC.md) owns production operations.
 
@@ -21,7 +21,7 @@ There is no screenshot, Screen Recording, OCR, audio, video, JSONL, SQLite, netw
 
 ## Privacy contract
 
-Password-manager matching and Accessibility secure-field detection pause every capture channel. An unknown result is unsafe and fails closed. Key handling performs a synchronous secure-app and secure-field decision before appending. Asynchronous work carries privacy and context generations and is discarded if state changes.
+Configured secure-app matching and Accessibility secure-field detection pause every capture channel. An unknown result is unsafe and fails closed. Key handling performs a synchronous secure-app and secure-field decision before appending. Asynchronous work carries privacy and context generations and is discarded if state changes.
 
 On a pause edge, in-flight keys, modifiers, scroll state, click reservations, and capture context that could cross the boundary are discarded. Clipboard change counts advance during a pause so paused content cannot appear later.
 
@@ -33,7 +33,12 @@ On a pause edge, in-flight keys, modifiers, scroll state, click reservations, an
 - Clipboard reads use change counts plus digests, retain no unnecessary plaintext state, and retry initialization with bounded backoff.
 - Accessibility scans have depth, child, character, global-node, time, queue, and debounce bounds. Unknown or stale results are discarded.
 - File, typing, and scroll timers wait on stateful deadlines rather than fixed polling.
-- File flush is serialized. It detaches resolved sections, groups them by capture date, writes each group durably, and restores only uncommitted groups after failure. Buffer caps bound retry memory.
+- File flush is serialized and groups records by capture date. Before the v2-only cutover, the legacy writer restores only groups that were not written. Buffer caps bound retry memory.
+- Starting on local day 2026-08-27, the canonical daily file is strict `activitylogger-analysis-v2` Markdown and the legacy writer is disabled for that day and later.
+- Each v2 flush publishes a private pending transaction before its records leave memory. The transaction owns exact planned appends to the canonical Markdown and its intent journal. Commit verifies both outputs before removing the pending transaction.
+- Once a pending transaction owns v2 records, those records are never restored to the in-memory buffer. An uncertain prepare or commit fails closed and stops capture so startup recovery can finish the same transaction without writing a duplicate.
+- Startup completes a valid recoverable pending transaction, then validates the current canonical v2 day and its complete intent stream before capture continues. If saved files no longer match a safe planned state, startup refuses to capture and requires repair.
+- The first valid next-day heartbeat may publish a payload-free ready proof for the completed day. A ready proof binds hashes for the canonical file and intent journal. It proves integrity, not continuous capture coverage.
 - SIGTERM and SIGINT request coordinated shutdown. Listeners and workers stop, a final flush runs, and fatal worker or persistence failure returns a nonzero status.
 
 ## Optional features
@@ -66,17 +71,13 @@ Config loads once from the deterministic discovery order in [`F2-config.md`](F2-
 
 Runtime sets umask `077`. Config directories, log directories, daily files, diagnostics, lock files, and compacted results use private ownership and modes. Logs remain plaintext and are retained indefinitely until the operator archives or deletes them. There is no automatic deletion.
 
-The Markdown compactor restructures plaintext and does not redact. Sections at or below 1 MiB and 10,000 lines receive full transformations. Oversized sections pass through unchanged after a diagnostic, using a spooled temporary file for bounded memory and never silently dropping content. Review and redact output before any external LLM use.
+The Markdown compactor is only for legacy logs. It restructures plaintext and does not redact. Sections at or below 1 MiB and 10,000 lines receive full transformations. Oversized legacy sections pass through unchanged after a diagnostic, using a spooled temporary file for bounded memory and never silently dropping content. The compactor rejects analysis-format logs because v2 is already compact.
+
+Compact views, v3 workload summaries, historical conversions, and weekly packs are derived private files. They never replace or modify canonical v2 Markdown or its intent journal. They may contain captured text and must be reviewed and redacted before any external use.
 
 ## Validation gate
 
-Source hardening and signed-bundle deployment completed after the original three QA loops plus the final lifecycle and Launch Agent acceptance loops. The final gate is:
-
-- all 335 source tests passed; the strict deployed codesign test passed separately after the final rebuild
-- dependency consistency, lint, strict audit, shell syntax, and plist validation passed
-- CI pinned to `macos-15`, with staged signing and tamper-rejection coverage
-
-The dedicated keychain import, pinned-leaf continuity, staged non-Hardened construction, strict deployed verification, bootout/bootstrap lifecycle, exact native-process proof, and real typing smoke passed. The installed mode `600` plist enforces `KeepAlive=true`, `RunAtLoad=true`, and `Umask=63`. The legacy PKCS#12 and any redundant login-keychain identity remain private mode `600` pending explicit operator disposition; they do not block runtime.
+The single current verification record is [`IMPL-STATUS.md`](IMPL-STATUS.md). It owns the latest test count, signed deployment proof, exact process evidence, and live Review Center result. Historical F0 through F6 evidence remains in [`STATUS.md`](STATUS.md) and [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md).
 
 ## Specification map
 
@@ -89,4 +90,6 @@ The dedicated keychain import, pinned-leaf continuity, staged non-Hardened const
 | [`F4-browser-url.md`](F4-browser-url.md) | URL sources and privacy normalization |
 | [`F5-capture-triggers.md`](F5-capture-triggers.md) | Section triggers and click ordering |
 | [`F6-scroll-coalescing.md`](F6-scroll-coalescing.md) | Scroll burst lifecycle |
-| [`STATUS.md`](STATUS.md) | Current acceptance status |
+| [`IMPL-STATUS.md`](IMPL-STATUS.md) | Current source and live acceptance status |
+| [`STATUS.md`](STATUS.md) | Historical F0 through F6 closeout record |
+| [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md) | Historical version 4.1.0 implementation closeout |

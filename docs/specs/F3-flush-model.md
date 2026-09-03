@@ -1,6 +1,6 @@
 # F3 buffers, deadlines, flush, and lifecycle
 
-**Status:** implemented and source-verified on 2026-08-21.
+**Status:** current persistence contract for ActivityLogger 4.5.1. Current acceptance evidence is in [`IMPL-STATUS.md`](IMPL-STATUS.md).
 
 ## Buffer model
 
@@ -32,9 +32,23 @@ Clicks reserve their section order immediately, then resolve Accessibility detai
 1. Flushes or discards scroll state according to privacy.
 2. Joins keys and seals open events.
 3. Expires unresolved clicks.
-4. Detaches only sections before the unresolved-click barrier.
+4. Selects only sections before the unresolved-click barrier for persistence.
 
-Detached sections are grouped by their capture date and written in order. New files receive one header. A failed group restores that group and all later uncommitted groups, never groups already written. Writes refuse links, non-regular files, and foreign ownership and enforce mode `600`.
+Selected sections are grouped by their capture date and written in order. Writes refuse links, non-regular files, and foreign ownership and enforce mode `600`.
+
+For days before 2026-08-27, the legacy writer adds one header to a new daily file. A failed legacy group restores that group and all later uncommitted legacy groups, never groups already written.
+
+For local day 2026-08-27 and later, `daily_log_YYYY-MM-DD.md` is the strict v2 canonical file and the legacy writer is disabled. The v2 path is one authoritative transaction:
+
+1. Recover any existing pending transaction before new capture data is prepared.
+2. Build exact planned appends for the canonical v2 Markdown and its intent journal.
+3. Publish a private pending manifest while the records are still in memory.
+4. After manifest publication, remove only the records now owned by that transaction from memory.
+5. Write and verify the exact planned outputs, then remove the pending manifest.
+
+A failure before manifest publication leaves v2 records in memory for a later retry. Once the manifest exists, its records must never return to memory because that could write them twice. An uncertain prepare or any finalization failure stops capture and leaves recovery evidence for the next startup. Startup recovery completes a valid recoverable transaction and validates canonical-to-intent parity before capture continues. If a target no longer matches a safe planned state, startup refuses to capture and requires repair.
+
+The first valid next-day heartbeat may publish `.daily_log_YYYY-MM-DD.ready.json` for the completed day. This payload-free proof binds the canonical and intent hashes. It proves source integrity, not full-day capture coverage.
 
 The file writer waits on its deadline or an explicit wake event. Failure uses bounded exponential backoff up to 60 seconds. It does not busy-poll.
 
@@ -46,4 +60,4 @@ Production rebuild and config restart share one process lifecycle. They validate
 
 ## Acceptance
 
-Tests cover exact typing deadlines, no typing-pause seal, concurrent flush serialization, partial-write restoration, midnight routing, bounded retries, pending-click barriers, early and ordinary signal shutdown, listener and worker failure, final-flush exit status, bootout-before-termination ordering, slow launch discovery, config-restart recovery, rollback, and fresh-PID exclusion.
+Tests cover exact typing deadlines, no typing-pause seal, concurrent flush serialization, legacy partial-write restoration, midnight routing, authoritative ownership before detach, exact commit, partial recovery, no restore after ownership, ready-proof publication, bounded retries, pending-click barriers, signal shutdown, listener and worker failure, final-flush exit status, bootout-before-termination ordering, slow launch discovery, config-restart recovery, rollback, and fresh-PID exclusion.

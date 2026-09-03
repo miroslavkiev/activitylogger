@@ -2,6 +2,8 @@
 
 This is the canonical production and recovery guide for ActivityLogger on modern macOS.
 
+For the current release and verification record, see [Implementation status](specs/IMPL-STATUS.md).
+
 ## Required runtime chain
 
 ```text
@@ -112,7 +114,7 @@ Use the Review Center in three steps:
 
 1. Choose an end date and either 5 or 7 completed calendar days. Select **Create review files**.
 2. Select **Show review files in Finder** and start with `REVIEW_PROMPT.md`. Prefer a trusted local tool. Review and redact private text before using any online tool.
-3. Record what happened and save the result locally.
+3. Record the review outcome and an optional note locally.
 
 Capture stays paused while the Review Center is visible. Closing or minimizing the window resumes capture unless manual pause, a secure app, or a secure field still requires a pause.
 
@@ -124,6 +126,26 @@ The Review Center uses the same local control functions as these commands:
 .venv/bin/python scripts/activityloggerctl.py pause
 .venv/bin/python scripts/activityloggerctl.py resume
 ```
+
+To create the same fixed review files from the command line, use:
+
+```bash
+.venv/bin/python scripts/export_weekly_review.py --end YYYY-MM-DD --days 5
+```
+
+Use `--days 7` for a 7-day review. Every selected day must be complete and pass its ready check.
+
+After the review, record the result locally with:
+
+```bash
+.venv/bin/python scripts/activityloggerctl.py review \
+  --week YYYY-MM-DD \
+  --outcome accepted \
+  --value-result "What changed" \
+  --notes "What to try next"
+```
+
+The allowed outcomes are `accepted`, `ignored`, and `tried`.
 
 Manual pause stops every capture channel through the shared privacy gate. Manual resume clears only the manual pause and never clears a secure-app or secure-field pause. A paused clipboard change is consumed and is not written later. The manual state is stored with private permissions and survives a restart. An unreadable existing state keeps capture paused.
 
@@ -146,10 +168,10 @@ Privacy-sensitive defaults:
 
 - `features.browser_url_capture = false`
 - `privacy.unsafe_full_browser_urls = false`
-- `window_titles.activitywatch_enricher = false`
+- `window_titles.activitywatch_enricher = true`
 - `window_titles.activitywatch_allow_remote = false`
 
-Safe browser URL mode always removes user information and fragments and neutralizes the full query string before length capping. Unsafe full-URL mode remains an explicit warning-bearing opt-in, but still removes user information and fragments. ActivityWatch accepts loopback endpoints unless remote access is explicitly enabled with a warning.
+Safe browser URL mode always removes user information and fragments and neutralizes the full query string before length capping. Unsafe full-URL mode remains an explicit warning-bearing opt-in, but still removes user information and fragments. ActivityWatch enrichment is on by default. Native app and window values win, and the default ActivityWatch endpoint is `http://localhost:5600`. Only loopback endpoints are accepted unless remote access is explicitly enabled with a warning.
 
 For a config-only change:
 
@@ -165,7 +187,9 @@ Daily logs and compacted outputs are mode `600`; their directories are mode `700
 
 `compact_markdown_log.py` restructures plaintext. It does not sanitize or redact. Oversized sections pass through unchanged after a warning to preserve content with bounded memory. Review and redact every output before sending it to an external LLM. Prefer local analysis. There is no automatic deletion, so archival and deletion must be operator-managed and verified.
 
-## Deployment verification state on 2026-08-21
+## Historical deployment evidence from 2026-08-21
+
+This section records the 2026-08-21 deployment and is not the current release status. See [Implementation status](specs/IMPL-STATUS.md) for the latest verified release.
 
 The interactive setup imported `.codesign/identity.p12` nonextractably into `.codesign/activitylogger-signing.keychain-db`. Pinned leaf `0a609d91ba3541a2b9589363974fa460be0f091c` matches both the prior and deployed designated requirement. Staged construction, canonical rebuild, and strict deployed verification succeeded.
 
@@ -175,7 +199,7 @@ The final source suite passed all 335 tests. The strict deployed codesign test p
 
 The final native PID `88019` started at 12:57:05 CEST from the exact deployed executable and remained stable. Launch Agent wrapper PID `85208` was running with one run and no prior exit. Diagnostics recorded the expected privacy-neutral SIGTERM at 12:56:46 CEST for the replaced process and successful native context plus listener initialization for the final process. A real typing smoke grew the mode `600` daily log to 112,535 bytes at 12:57:44 CEST. A bounded 12:56:40 through 12:58:00 security-log query found no kill, deny-mmap, or library-validation enforcement.
 
-The installed Launch Agent was reconciled through `install_launch_agent.sh` and `restart_logger.sh`; it now enforces `KeepAlive=true`, `RunAtLoad=true`, and `Umask=63`. The legacy PKCS#12 and any redundant login-keychain identity remain mode `600` pending explicit operator disposition. That recovery-asset decision is the only open operational item and does not block capture.
+At that time, the installed Launch Agent was reconciled through `install_launch_agent.sh` and `restart_logger.sh`; it enforced `KeepAlive=true`, `RunAtLoad=true`, and `Umask=63`. The legacy PKCS#12 and any redundant login-keychain identity remained mode `600` pending explicit operator disposition. That recovery-asset decision did not block capture.
 
 ## Anti-patterns
 

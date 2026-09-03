@@ -1,21 +1,100 @@
 # ActivityLogger for macOS
 
-ActivityLogger records active windows, keystrokes, clicks, Accessibility text, optional browser URLs, and clipboard changes into private daily Markdown logs for local analysis.
+ActivityLogger is a private work journal for one person using a Mac. It records local work context and activity so you can remember what you worked on, see where your attention moved, find repeated steps, and spot small ways to work more efficiently.
+
+It can prepare a focused review of 5 or 7 completed calendar days. ActivityLogger creates the review files, but it does not analyze them, upload them, or act on their contents. You choose a tool you trust and decide what to do with the result.
 
 **Version:** 4.5.1 | **Runtime:** `dist/ActivityLoggerNative.app` | **Operations:** [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md)
 
-## Safety model
+> ActivityLogger records sensitive plaintext, including typed text and clipboard changes. Use it only on a Mac and user account that you control.
 
-- Password managers and Accessibility secure fields pause every capture channel. Unknown privacy state fails closed.
-- Clipboard changes observed during a pause are consumed and are not logged later.
-- Browser URL capture is off by default. Safe mode removes user information and fragments and neutralizes the complete query string. The unsafe full-URL option is an explicit privacy-risk opt-in.
-- ActivityWatch enrichment is optional and accepts only loopback endpoints by default. Remote access requires an explicit unsafe opt-in.
-- Config, log, and generated output paths are checked and created with private permissions.
-- Logs are retained indefinitely until the operator archives or deletes them. There is no automatic deletion.
+## What it helps you do
 
-## Canonical environment
+- Rebuild the story of a workday from app, window, and activity context.
+- See recorded context changes and work spans across the day.
+- Find repeated work, friction, and possible errors during a weekly review.
+- Ask for up to five small improvement ideas and rank the top three by likely value and effort.
+- Save whether you found an idea, tried a change, or took no action, with an optional value note.
+- Keep the source data local unless you choose to share a reviewed and redacted copy.
 
-Use the exact interpreter in [`.python-version`](.python-version), currently Python 3.11.9, and the project-local `.venv`:
+ActivityLogger is not an exact time tracker or a billing timesheet. A work span shows observed activity, not proven effort time. Gaps can mean idle time, a privacy pause, stopped capture, or missing capture.
+
+## How it works
+
+1. The background app writes observed activity to one private Markdown file for each local calendar day.
+2. The Review Center checks logger health, recent safe writes, privacy state, private storage, and whether selected days are ready.
+3. You create a review pack for exactly 5 or 7 consecutive completed calendar days. A day that is missing or not ready is not replaced with an older day.
+4. You review the pack with a trusted tool, check its evidence and limits, then record the review outcome and an optional note.
+
+The daily Markdown logs stay the source records. Weekly packs are views made for review. They can lose some click order and timing detail, so they do not replace the daily logs.
+
+## What it records
+
+| Data | Default | What it means |
+|---|---:|---|
+| Active app and window | On | Uses native macOS details first. If ActivityWatch is installed, ActivityLogger can also use its local window title. By default, it connects only to this Mac. |
+| Typed characters and hotkeys | On | Keeps the local input trail needed to understand work context. |
+| Clicks | On | Records click details when macOS Accessibility can provide them. |
+| Changed Accessibility text | On | Reads text exposed by macOS Accessibility. This is not a screenshot or screen image. |
+| Clipboard changes | On | Records changed clipboard text outside privacy pauses. |
+| Browser URLs | Off | When enabled, safe mode removes user information and fragments and hides the full query string. |
+| Trigger labels | Off | Can add a small reason label when a section closes. |
+| Scroll capture | Off | Can group a short scroll burst into one bounded event. |
+
+ActivityLogger does not capture screenshots, Screen Recording, audio, video, camera input, or mouse-move trails. Base capture does not need Screen Recording permission.
+
+## Weekly Review Center
+
+ActivityLogger runs in the background and has no normal Dock window. While it is running, open `dist/ActivityLoggerNative.app` in Finder to show the Review Center.
+
+Use the three steps in the window:
+
+1. Choose the last day and select 5 or 7 consecutive completed calendar days. Select **Create review files**.
+2. Select **Show review files in Finder**. Start with `REVIEW_PROMPT.md`. Review and redact private text before using any online tool.
+3. After the review, choose **Found an idea to try**, **Tried a change**, or **No action**. You can also save a short value note, such as time saved each week.
+
+The Review Center pauses capture while its window is visible. Closing or minimizing it removes only this window pause. Manual pause or a secure app or field can keep capture paused.
+
+The Review Center window and its status checks do not show captured text. The review files do contain private captured text.
+
+## Daily privacy controls
+
+Normal daily use is passive. Use the Review Center when you want to check status or turn manual pause on or off. The same local controls are available from Terminal:
+
+```bash
+.venv/bin/python scripts/activityloggerctl.py health
+.venv/bin/python scripts/activityloggerctl.py storage
+.venv/bin/python scripts/activityloggerctl.py pause
+.venv/bin/python scripts/activityloggerctl.py resume
+```
+
+Manual pause stops every capture channel. It stays on after a restart. Resume clears only manual pause and never clears a secure-app or secure-field pause.
+
+Apps matched by the secure-app list in the config and macOS secure text fields pause all capture. Unknown privacy state also pauses capture. Clipboard changes seen during a pause are consumed and are not written after resume.
+
+## Private files and retention
+
+The built-in daily log path is:
+
+```text
+~/scripts/activitylogger/logs/daily_log_YYYY-MM-DD.md
+```
+
+You can change the log directory in the local config. The signed app stores review packs, review outcomes, and private runtime state under:
+
+```text
+~/Library/Application Support/ActivityLogger/
+```
+
+Private directories use mode `700`, and private files use mode `600`. These files are still sensitive plaintext. ActivityLogger does not redact them and does not delete them automatically. They stay until you archive or delete them. Keep FileVault enabled, avoid shared backups, and review every file before external use.
+
+Browser URL capture is off by default. ActivityWatch enrichment is on by default and connects only to this Mac unless the operator turns on remote access. Remote ActivityWatch access and full URL capture require clear choices and produce privacy warnings.
+
+## Existing installation and maintainer setup
+
+This repository is built for a signed local installation that is already managed by its operator. It is not a clean download-and-run package. A new machine needs an approved signing identity and a checked first-install plan. Do not create or rotate a signing identity just to bypass a setup error.
+
+The maintained build uses macOS on Apple silicon, exact Python 3.11.9 from [`.python-version`](.python-version), and the project-local `.venv`:
 
 ```bash
 python3.11 -m venv .venv
@@ -26,44 +105,11 @@ python3.11 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-`requirements.txt` is the hash-locked macOS Apple silicon environment. Regenerate it only with `./scripts/compile_requirements.sh`.
+`requirements.txt` is the locked macOS Apple silicon environment. Regenerate it only with `./scripts/compile_requirements.sh`.
 
-## One-time signing migration
+For the one-time migration of an existing PKCS#12 identity, follow [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md). The setup uses native macOS password prompts and checks the certificate against the deployed app. Normal builds never create or rotate an identity.
 
-Before the first canonical rebuild, provision the dedicated signing keychain while the currently deployed app and legacy PKCS#12 file still exist:
-
-```bash
-./scripts/setup_signing_identity.sh --import-p12 .codesign/identity.p12
-```
-
-Use the native SecurityAgent prompts. Password environment variables are rejected. Provisioning verifies the supplied certificate against the deployed app, imports a nonextractable private key into the dedicated keychain, and pins the leaf SHA-1 fingerprint. `--rotate-identity` is only for an intentional identity change and warns that existing TCC grants will not follow.
-
-The 2026-08-21 migration, rebuild, exact-process restart, and capture smoke test succeeded. The legacy PKCS#12 and any redundant login-keychain copy remain private with mode `600` because deleting recovery identities is irreversible and requires explicit operator approval. They are not runtime blockers. Keep them out of shared backups until the operator archives or removes them deliberately.
-
-## Build, install, and TCC
-
-After provisioning, use only the canonical build:
-
-```bash
-./scripts/rebuild_and_restart.sh
-```
-
-It creates a staged PyInstaller onedir app and signs every nested Mach-O plus the outer bundle with the pinned identity and the sole Apple Events entitlement. Hardened Runtime is intentionally not enabled for the retained local self-signed leaf because macOS rejected that untrusted chain under Hardened Runtime. Verification instead enforces strict nested and outer signatures, the exact leaf and designated requirement, the bundle identifier, an exact entitlement allowlist, symlink containment, and Mach-O load-path containment.
-
-Before promotion, the build validates the installed Launch Agent, boots it out, proves exact-path processes are quiesced, and terminates only revalidated residual PIDs with bounded TERM then KILL escalation. After atomic promotion it bootstraps the Launch Agent and requires a fresh stable exact-path process. Failed proof restores the unchanged prevalidated bundle and bootstraps a fresh previous-app process.
-
-Install or reconcile the Launch Agent, then restart through the verified lifecycle:
-
-```bash
-./scripts/install_launch_agent.sh
-./scripts/restart_logger.sh
-```
-
-The installed plist is mode `600` and requires `KeepAlive=true`, `RunAtLoad=true`, and `Umask=63`.
-
-Grant `dist/ActivityLoggerNative.app` Accessibility and Input Monitoring. Optional browser Apple Events may prompt for Automation only when browser URL capture is enabled. Do not add the app as both a Login Item and a Launch Agent.
-
-## Config
+Create the optional local config with private permissions:
 
 ```bash
 mkdir -p ~/.config/activitylogger
@@ -72,107 +118,62 @@ chmod 700 ~/.config/activitylogger
 chmod 600 ~/.config/activitylogger/config.toml
 ```
 
-Config is trusted local operator input and loads once at process start. The loader rejects unsafe file ownership, links, permissions, malformed values, and out-of-range resource limits. For a config-only edit, run:
+Config loads once when the app starts. For a config-only change, run:
 
 ```bash
 ./scripts/restart_logger.sh
 ```
 
-Use `./scripts/rebuild_and_restart.sh` after source changes.
-
-## Logs and compaction
-
-Daily logs live at `logs/daily_log_YYYY-MM-DD.md` in a mode `700` directory with mode `600` files. Starting on 2026-08-27 in Europe/Zagreb, this canonical file uses `activitylogger-analysis-v2` as the only live Markdown format. The fixed local-day boundary prevents one daily file from mixing formats. Older daily logs and the completed comparison data under `logs/analysis_shadow/` stay unchanged.
-
-## Review Center and operator controls
-
-Open `dist/ActivityLoggerNative.app` in Finder while the logger is running to show the native Review Center. It stays hidden during normal background startup. The Review Center helps you prepare a private weekly review. ActivityLogger creates the files, but it does not analyze them or send them anywhere. The window itself is payload-free and never shows captured text.
-
-Use it in three steps:
-
-1. Choose an end date and either 5 or 7 completed calendar days. Select **Create review files**.
-2. Select **Show review files in Finder** and start with `REVIEW_PROMPT.md`. Prefer a trusted local tool. Review and redact private text before using any online tool.
-3. After you use the review files, record what happened and save the result locally.
-
-Capture stays paused while the Review Center is visible. Closing or minimizing the window resumes capture unless manual pause, a secure app, or a secure field still requires a pause. Manual pause survives a restart and fails closed if its state cannot be read.
-
-The same controls are available from the local command line:
+After a source change, use the required signed build and restart:
 
 ```bash
-.venv/bin/python scripts/activityloggerctl.py health
-.venv/bin/python scripts/activityloggerctl.py storage
-.venv/bin/python scripts/activityloggerctl.py pause
-.venv/bin/python scripts/activityloggerctl.py resume
+./scripts/rebuild_and_restart.sh
 ```
 
-To prepare a fixed completed calendar window without opening the Review Center:
+Use `./scripts/install_launch_agent.sh` only to install or repair the existing Launch Agent, then run `./scripts/restart_logger.sh`. Grant `dist/ActivityLoggerNative.app` Accessibility and Input Monitoring. Optional browser URL capture may also ask for Automation permission for each browser you enable.
+
+Do not run both a Login Item and the Launch Agent. Do not launch Python directly from launchd. The full signing, TCC, restart, rollback, and recovery guide is in [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md).
+
+## Advanced local tools
+
+Create a weekly pack without opening the Review Center:
 
 ```bash
 .venv/bin/python scripts/export_weekly_review.py --end YYYY-MM-DD --days 5
 ```
 
-Use `--days 7` for a 7-day window. Every selected day must be complete, use the canonical v2 format, and have a valid ready proof. Older days are never substituted for missing days. The Review Center and these operator commands write packs atomically under `~/Library/Application Support/ActivityLogger/private_analysis_review/` with private permissions. Each pack includes v3 workload summaries, coverage limits, hashes, an index, and a safe review prompt. The summaries still contain private captured text. Review and redact them before any external use.
+Use `--days 7` for seven days. Every selected day must be complete, use the current v2 format, and pass its private integrity check.
 
-V2 keeps the exact event records and intent digests while reducing timeline overhead. It uses stable event names, one context heading per change, reversible adjacent-repeat counts, focus and idle transitions, session markers, and hourly continuity markers. Local Python code generates it. It does not call an LLM or a network service.
-
-Each v2 flush first publishes a private pending transaction, then writes and verifies the canonical Markdown and integrity journal. The pending transaction is removed after exact parity passes. The first next-day heartbeat publishes a payload-free `.daily_log_YYYY-MM-DD.ready.json` proof. ContextAggregator requires this proof before it can upload a v2 day.
-
-To check strict parsing, intent parity, invalid-marker state, and payload-free event counts during an active day, run:
+Check one day without printing captured text:
 
 ```bash
 .venv/bin/python scripts/check_analysis_day.py --day YYYY-MM-DD
 ```
 
-This integrity check selects the historical shadow source before the cutover and the canonical daily log after the cutover. It does not assert that the day is complete or that heartbeat coverage is sufficient. It does not print headings or payloads.
-
-After one complete calendar day, run the payload-free gate:
-
-```bash
-.venv/bin/python scripts/review_analysis_trial.py --day YYYY-MM-DD
-```
-
-The rollout used this gate and an independent review before the cutover. It remains available for completed comparison days.
-
-To create a smaller local review view for one completed analysis day, run the explicit day-scoped exporter:
-
-```bash
-.venv/bin/python scripts/export_compact_analysis.py --day YYYY-MM-DD
-```
-
-It writes `private_analysis_review/compact_analysis_YYYY-MM-DD.md` with private permissions. This directory is outside `logs/`, and the filename does not match ContextAggregator's daily-log discovery pattern. The original dated analysis file and its intent journal remain authoritative. The exporter verifies their exact agreement and verifies that the compact view reconstructs the same records. It does not assert that the day has enough heartbeat coverage for cutover. Run the payload-free gate separately for that decision.
-
-The compact view is local plaintext restructuring. It does not redact payloads, call an LLM, or use the network. Manually review and redact it before any external use.
-
-For a smaller, task-focused v3 pilot, run:
+Create a smaller workload view for one completed day:
 
 ```bash
 .venv/bin/python scripts/export_workload_v3_pilot.py --day YYYY-MM-DD
 ```
 
-It writes `private_analysis_review/v3_pilot_YYYY-MM-DD.md`. The exporter accepts only a completed canonical v2 day with a valid ready proof. It keeps typed text, clipboard, screen, URL, scroll, and generic event evidence exactly. It groups clicks by target within short work spans and summarizes focus, heartbeat, privacy, idle, and session markers. Hourly focus-context buckets keep passive reading and review work visible. The file includes source hashes, exact event accounting, and an explicit loss ledger.
-
-This pilot is intentionally lossy and is not a replacement for v2. It uses private atomic output outside `logs/`, does not match the daily-log upload filename, does not call an LLM, and does not use the network. V2 and its intent journal remain the only authority. Review at least three completed days before deciding if a later format should change live logging.
-
-The old compactor remains available for legacy logs:
+Create a reversible compact view for one day:
 
 ```bash
-.venv/bin/python compact_markdown_log.py logs/daily_log_YYYY-MM-DD.md
+.venv/bin/python scripts/export_compact_analysis.py --day YYYY-MM-DD
 ```
 
-It writes a mode `600` result atomically. It rejects analysis-format logs because v2 is already compact. Oversized legacy sections pass through unchanged after a warning so memory stays bounded and content is not silently lost. Manually review and redact every result before sending it to an external LLM. Prefer local processing and keep FileVault enabled. Archive or delete old logs only through an operator-managed, verified workflow.
+For older log formats, `compact_markdown_log.py` can reduce repeated text and `historical_analysis.py` can create private review copies. They never change the source logs. Neither tool redacts private text.
 
-To review completed legacy days in the new analysis shape, run:
+## Documentation map
 
-```bash
-.venv/bin/python historical_analysis.py
-```
+- [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md): production setup, signing, permissions, restart, rollback, and recovery.
+- [`docs/specs/00-MASTER.md`](docs/specs/00-MASTER.md): current product, privacy, capture, and storage contracts.
+- [`docs/specs/F2-config.md`](docs/specs/F2-config.md): every config key, default, and allowed range.
+- [`docs/specs/IMPL-STATUS.md`](docs/specs/IMPL-STATUS.md): implementation and deployment evidence.
+- [`docs/COMPREHENSIVE_REVIEW_2026-08-21.md`](docs/COMPREHENSIVE_REVIEW_2026-08-21.md): dated security and reliability review.
 
-This local program converts every completed legacy day into `private_historical_review/`. It skips declared analysis-format canonical logs and never changes any source log. The private output directory is outside `logs/`, and its filenames do not match ContextAggregator's `daily_log_YYYY-MM-DD.md` discovery rule. The converter requires separate input and output trees. It marks timestamps as legacy section-seal times, infers only stable event wrappers and section boundaries, preserves ambiguous content as exact text, and verifies that every generated file parses back to its projected records. This is a content-preserving projection, not a byte-for-byte reconstruction of source structure. The old format did not retain true event times or unambiguous event boundaries, so the unchanged daily logs remain the raw reference. Review `conversion_summary.json` for payload-free size, repeat, inference, and DST metrics. Do not trust a run while `conversion_incomplete.json` exists. Deleted source days are reported as orphaned outputs and are never deleted automatically.
+## Latest recorded verification
 
-## Current verification
+Version 4.5.1 passed 514 tests with 1 skipped, lint, dependency checks, and the strict dependency audit with no known vulnerabilities. The signed build, certificate continuity, bundle checks, Launch Agent restart, one-process check, private file modes, and daily v2 integrity also passed. Live verification showed the guided Review Center, selected its prepared prompt in Finder, and kept capture paused while the Review Center was active and Finder had focus. That run did not recheck capture resume after closing the window.
 
-The 2026-08-21 signing import, leaf continuity, canonical rebuild, strict deployed verification, bundle identifier, exact Apple Events-only entitlement, Automation purpose metadata, safe tamper rejection, load containment, and private modes were verified. Pinned leaf is `0a609d91ba3541a2b9589363974fa460be0f091c`.
-
-The 2026-08-23 version 4.2.0 soak build passed all 357 tests. Ruff critical rules, dependency consistency, strict dependency audit, byte compilation, diff checks, and forbidden-dash scans passed. CI is pinned to `macos-15`.
-
-The mandatory rebuild passed staged construction, signing, old-app prevalidation, atomic promotion, Launch Agent bootstrap, and fresh-process health proof. The legacy log, analysis Markdown, and intent journal updated together after restart. Every live intent count and digest matched the analysis records, and no invalid marker existed.
+This is recorded verification, not a promise that capture has full coverage on every future day. Use the Review Center health and freshness checks before trusting a review pack.

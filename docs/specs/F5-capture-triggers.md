@@ -1,6 +1,6 @@
 # F5 capture triggers and ordered click sections
 
-**Status:** implemented, opt-in, and source-verified on 2026-08-21.
+**Status:** current trigger contract for ActivityLogger 4.5.1. Current acceptance evidence is in [`IMPL-STATUS.md`](IMPL-STATUS.md).
 
 ## Trigger annotations
 
@@ -13,7 +13,7 @@
 - `scroll_coalesce`
 - `url_change`
 
-`typing_pause` is reserved and rejected if a caller attempts to emit it. The Markdown timestamp line includes the trigger token only when the option is enabled. Old and new logs remain parseable by the compactor and analysis prompt.
+`typing_pause` is reserved and rejected if a caller attempts to emit it. In pre-cutover legacy Markdown, the timestamp line includes the trigger token only when the option is enabled. Those legacy logs remain parseable by the legacy compactor. Current v2 logs store the trigger as structured analysis data and are rejected by the legacy compactor because they are already compact.
 
 ## Seal behavior
 
@@ -38,7 +38,7 @@ Persistence never writes beyond an unresolved click placeholder, so later events
 
 ## Structural safety
 
-Headings and inline values are sanitized so captured text cannot inject structural Markdown headings, trigger fields, or fences. Dynamic fence handling and fence-aware parsing preserve untrusted captured text as content. The compactor is compatible but is not a security redactor.
+Headings and inline values are sanitized so captured text cannot inject structural Markdown headings, trigger fields, or fences. Dynamic fence handling and fence-aware parsing preserve untrusted captured text as content. The compactor supports legacy logs only and is not a security redactor.
 
 ## Acceptance
 

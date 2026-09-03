@@ -2,6 +2,8 @@
 
 Date: 2026-08-21
 
+Historical evidence note: This report records commit `ab4ccbe`, ActivityLogger 4.1.0. Its relative source links and line numbers match that commit and may not point to the same code on current HEAD. Keep the report as closeout evidence. See [`specs/IMPL-STATUS.md`](specs/IMPL-STATUS.md) for current acceptance status.
+
 Scope: capture runtime, privacy controls, persistence, configuration, browser integration, Markdown compaction, macOS launch and signing, dependencies, CI, tests, performance, data handling, and documentation.
 
 ## Executive outcome
