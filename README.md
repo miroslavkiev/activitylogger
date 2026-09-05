@@ -4,7 +4,7 @@ ActivityLogger is a private work journal for one person using a Mac. It records 
 
 It can prepare a focused review of 5 or 7 completed calendar days. ActivityLogger creates the review files, but it does not analyze them, upload them, or act on their contents. You choose a tool you trust and decide what to do with the result.
 
-**Version:** 4.6.0 (source) | **Runtime:** `dist/ActivityLoggerNative.app` | **Operations:** [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md)
+**Version:** 4.6.0 | **Runtime:** `dist/ActivityLoggerNative.app` | **Operations:** [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md)
 
 > ActivityLogger records sensitive plaintext, including typed text and clipboard changes. Use it only on a Mac and user account that you control.
 
@@ -196,6 +196,6 @@ For older log formats, `compact_markdown_log.py` can reduce repeated text and `h
 
 The 4.6.0 source passed 606 tests, Ruff critical checks, dependency consistency and the strict dependency audit with no known vulnerabilities. Separate code, UX and final integration reviews found no unresolved material issue in their reviewed scope. All 194 completed daily logs match their pre-change hashes.
 
-Local deployment is pending a Mac/keychain unlock. Both canonical build attempts reached signing, then macOS denied keychain authorization before any installed app or process was changed. The installed signed app remains 4.5.1 with its existing process. New live tab and capture checks are still required after the signed restart. See [the current verification record](docs/specs/IMPL-STATUS.md).
+The signed 4.6.0 app was deployed on 2026-09-05 with the unchanged signing identity and a fresh verified process. Both native tabs were checked live. Switching tabs keeps the privacy pause; closing or minimizing removes it. Fresh typed events reached the log within 14 seconds, with matching intent records and no invalid marker. Storage checks found no unsafe items or missing readiness proofs. See [the current verification record](docs/specs/IMPL-STATUS.md) for evidence and limits.
 
 These results do not prove full capture on every future day. Check Daily status and the pack's quality notes before trusting a review result.

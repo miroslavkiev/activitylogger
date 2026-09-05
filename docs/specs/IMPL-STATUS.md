@@ -1,10 +1,10 @@
 # Current implementation status
 
-**Source version:** 4.6.0
+**Application version:** 4.6.0
 
 **Verified on:** 2026-09-05
 **Source verdict:** all 16 audit findings and Option C are implemented, with 606 tests passed and no unresolved material issue in separate code, UX and final integration reviews.
-**Local deployment:** blocked at signing while the Mac/keychain is locked. The installed 4.5.1 app is unchanged and still running.
+**Local deployment:** complete. The canonical signed build was promoted successfully with the unchanged pinned identity and fresh native PID 38841. Source commit `4dbee1d` is on `origin/main`.
 
 This is the current verification page. The fix checklist and review corrections are in [`../AUDIT_REMEDIATION_2026-09-05.md`](../AUDIT_REMEDIATION_2026-09-05.md). Older evidence stays in [`STATUS.md`](STATUS.md), [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md) and the dated audit documents.
 
@@ -28,14 +28,17 @@ This is the current verification page. The fix checklist and review corrections 
 - Ruff critical rules, dependency consistency and strict dependency audit: passed; no known vulnerabilities.
 - Separate code, UX and final integration reviews: complete. Final reviewed source hashes match the release source.
 - Real-writer fault test: failure after replacing status cannot acknowledge Resume; capture stays paused, status becomes unverified and retry restores a valid state.
-- Native tests cover construction, layout constraints, keyboard loops, draft/date/clock boundaries, both tab states and close/minimize privacy. Live UI and VoiceOver are separate checks.
-- Canonical build: both attempts compiled the staged bundle, then stopped at native keychain authorization. The second used the permission-enabled execution path. No promotion, process replacement, identity change or TCC grant change occurred.
-- Preserved deployment: signed 4.5.1, one verified native PID 7830, matching runtime state and no pending source transaction.
+- Native tests cover construction, layout constraints, keyboard loops, draft/date/clock boundaries, both tab states and close/minimize privacy.
+- Live native checks: Daily status opens by default; both tabs display correctly; tab changes retain the privacy pause; minimizing and closing remove only the window's pause. Final capture state is active with manual pause off and storage clear.
+- Canonical build: the earlier locked-keychain attempts left 4.5.1 unchanged. After unlocking, the staged 4.6.0 build passed signing, promotion and fresh-process proof. The signing leaf remains `0a609d91ba3541a2b9589363974fa460be0f091c`. No new TCC grants were needed.
+- Live capture: typed events at 20:10:27 and 20:10:29 local time were durable by 20:10:41. The canonical v2 log parses strictly, matches its intent journal and has no invalid marker. The process and runtime state both identify PID 38841.
+- Post-deployment history check: 194 completed canonical files matched their pre-change hashes, with zero changed or missing files.
+- Final storage check: zero unsafe log items, zero unsafe review items and zero missing readiness proofs. Bundled recovery help is present at `Contents/Resources/docs/V2_RECOVERY.md`.
 
-## Required to finish local deployment
+## Validation limits
 
-Unlock the Mac and the existing dedicated signing keychain through native macOS controls. Then run `./scripts/rebuild_and_restart.sh`, verify the pinned signature and a fresh stable process, check both native tabs and privacy on close/minimize, and type a harmless marker in an ordinary app to confirm a safe write. Do not rotate the signing identity or request fresh TCC grants to bypass the lock.
+The synthetic TextEdit marker was not captured because native foreground checks showed Screen Sharing while TextEdit was inactive. That specific foreground typing test remains unverified; the successful capture evidence above is from actual foreground key events, checked without printing their text. VoiceOver and every other app's Accessibility behavior were not tested live. These results do not prove uninterrupted future capture or survival of RAM-only records after forced exit or power loss.
 
 ## Open operator decision
 
-The legacy `.codesign/identity.p12` and any redundant login-keychain identity remain private with mode 600. Archival or irreversible deletion requires explicit operator approval. They remain recovery assets and are not the cause of this signing authorization block.
+The legacy `.codesign/identity.p12` and any redundant login-keychain identity remain private with mode 600. Archival or irreversible deletion requires explicit operator approval. They remain recovery assets and are not deployment blockers.

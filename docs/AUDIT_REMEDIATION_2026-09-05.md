@@ -64,8 +64,12 @@ Validation also exposed a startup ownership bug: an early exit could write stopp
 
 Source implementation and independent reviews are complete. The final full suite passed **606 tests in 28.98 seconds**. Ruff E4/E7/E9/F, dependency consistency and strict dependency audit passed, with no known vulnerabilities. New code adds no dependency. Independent code, UX and final integration reviews found no unresolved material issue in their reviewed scope. Their private reports contain reproductions and final source hashes.
 
-All **194 completed canonical logs** match the before-change SHA-256 checks. No source history was rewritten. The installed app still has its original version 4.5.1 and process PID 7830, with matching runtime identity and no pending source transaction.
+All **194 completed canonical logs** match the before-change SHA-256 checks after deployment, with zero changed or missing files. No source history was rewritten. The installed app is now signed version 4.6.0 with fresh native PID 38841 and matching runtime identity. The final active-day check passes strict parsing, matches its intent journal and has no invalid marker.
 
-Two canonical build attempts compiled the 4.6.0 bundle, then stopped at signing because macOS could not authorize the existing keychain. This happened before app promotion or process replacement. Computer Use then confirmed that the Mac was locked. The existing installation is preserved. Unlocking the Mac/keychain, retrying the signed build and checking the live tabs, whole-window privacy and safe capture remain required before deployment can be accepted.
+Two early build attempts stopped at signing while the Mac/keychain was locked, preserving 4.5.1. After unlocking, the canonical build signed, verified and promoted 4.6.0 successfully. The pinned signing leaf is unchanged and no TCC re-grant was needed. Source commit `4dbee1d` was pushed to `origin/main`.
+
+Live checks confirmed that Daily status opens by default, both tabs display correctly and switching tabs keeps the window privacy pause active. Closing or minimizing removes that pause. Final state shows capture active, manual pause off and storage clear. Actual foreground typed events were saved within 14 seconds. The synthetic TextEdit marker test remained unverified because TextEdit was inactive while Screen Sharing was the native foreground app; the operator deleted the temporary test document. No captured text was printed to validate foreground capture.
+
+Storage checks report zero unsafe log or review items and zero missing readiness proofs. The bundled local recovery guide is present. See [`specs/IMPL-STATUS.md`](specs/IMPL-STATUS.md) for the deployment evidence and validation limits.
 
 The prior 8b3fa3d baseline passed 515 tests. Passing tests do not prove live consent, every native app's Accessibility behavior, VoiceOver use, continuous capture or survival of RAM-only records after a forced exit or power loss.
