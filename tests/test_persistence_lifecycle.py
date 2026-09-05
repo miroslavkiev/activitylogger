@@ -80,6 +80,7 @@ def test_cross_day_trial_intent_retry_is_idempotent(monkeypatch):
     monkeypatch.setattr(il, "_write_analysis_group", lambda *args: None)
     assert il.flush_to_file() is False
     assert len(il._sections) == 2
+    monkeypatch.setattr(il.time, "monotonic", lambda: il._file_flush_deadline)
     assert il.flush_to_file() is True
     first_intents = al.read_intents(al.intent_path(il.LOG_DIR, first.date()))
     assert len(first_intents) == 1
@@ -187,16 +188,23 @@ def test_secure_writer_rolls_back_a_failed_append(tmp_path, monkeypatch):
 
 def test_file_writer_retries_with_capped_backoff(monkeypatch):
     waits: list[float] = []
+    clock = [0.0]
     outcomes = iter([False, False, True])
+    il._sections.append(_section("kept", LEGACY_AT))
+
+    def write_group(*_args):
+        return next(outcomes)
 
     def wait(delay):
         waits.append(delay)
         if len(waits) == 4:
             raise StopIteration
+        clock[0] += delay
         return False
 
     monkeypatch.setattr(il._writer_wakeup, "wait", wait)
-    monkeypatch.setattr(il, "flush_to_file", lambda: next(outcomes))
+    monkeypatch.setattr(il.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(il, "_write_section_group", write_group)
     monkeypatch.setattr(il, "FLUSH_INTERVAL_SEC", 30)
     with pytest.raises(StopIteration):
         il.file_writer_loop()

@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO))
 
 from analysis_view import DEFAULT_OUTPUT_DIR, export_compact_day  # noqa: E402
 from config import load_config  # noqa: E402
+from operator_errors import safe_error_message  # noqa: E402
 
 
 def main() -> int:
@@ -24,20 +25,21 @@ def main() -> int:
         type=date.fromisoformat,
         default=datetime.now().astimezone().date() - timedelta(days=1),
     )
-    parser.add_argument("--log-dir", type=Path, default=load_config().log_dir)
+    parser.add_argument("--log-dir", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     args = parser.parse_args()
     try:
+        log_dir = args.log_dir or load_config().log_dir
         result = export_compact_day(
-            args.log_dir,
+            log_dir,
             args.output_dir,
             args.day,
         )
     except Exception as exc:
-        print(f"error=compact export failed [{type(exc).__name__}]", file=sys.stderr)
+        print(f"error={safe_error_message(exc)}", file=sys.stderr)
         return 1
     print(f"day={result.day}")
-    print(f"output={result.output_file}")
+    print(f"output={(args.output_dir / result.output_file).resolve()}")
     print(f"events={result.event_count}")
     print(f"timeline_events={result.timeline_events}")
     print(f"absolute_timeline_rows={result.absolute_timeline_rows}")

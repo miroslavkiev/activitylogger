@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO))
 
 from analysis_log import validate_trial  # noqa: E402
 from config import load_config  # noqa: E402
+from operator_errors import safe_error_message  # noqa: E402
 
 
 def main() -> int:
@@ -22,9 +23,14 @@ def main() -> int:
         type=date.fromisoformat,
         default=datetime.now().astimezone().date() - timedelta(days=1),
     )
-    parser.add_argument("--log-dir", type=Path, default=load_config().log_dir)
+    parser.add_argument("--log-dir", type=Path, default=None)
     args = parser.parse_args()
-    result = validate_trial(args.log_dir, args.day)
+    try:
+        log_dir = args.log_dir or load_config().log_dir
+        result = validate_trial(log_dir, args.day)
+    except Exception as exc:
+        print(f"error={safe_error_message(exc)}", file=sys.stderr)
+        return 1
     print(f"day={args.day.isoformat()}")
     print(f"ok={str(result.ok).lower()}")
     print(f"events={result.event_count}")

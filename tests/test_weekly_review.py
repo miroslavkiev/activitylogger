@@ -167,7 +167,7 @@ def test_fixed_window_fails_without_substituting_an_older_ready_day(tmp_path):
     older = target[0] - timedelta(days=1)
     _ready_days(tmp_path / "logs", (older, *(day for day in target if day != missing)))
 
-    with pytest.raises(ValueError, match=rf"{missing.isoformat()}=missing"):
+    with pytest.raises(ValueError, match="selected days are not ready"):
         wr.create_weekly_review_pack(
             tmp_path / "logs",
             tmp_path / "review",
@@ -183,19 +183,22 @@ def test_final_source_fence_leaves_no_visible_or_pending_pack(tmp_path, monkeypa
     window = tuple(END - timedelta(days=offset) for offset in range(4, -1, -1))
     log_dir = tmp_path / "logs"
     _ready_days(log_dir, window)
-    real_validate = wr.validate_day_ready
+    real_export = wr.export_workload_day
     calls = 0
 
-    def fail_at_final_fence(path: Path, day: date) -> bool:
+    def change_source_after_export(*args, **kwargs):
         nonlocal calls
+        result = real_export(*args, **kwargs)
         calls += 1
-        if calls > len(window):
-            return False
-        return real_validate(path, day)
+        if calls == len(window):
+            marker = al.analysis_paths(log_dir, window[0])[1]
+            marker.write_text("invalid\n", encoding="utf-8")
+            marker.chmod(0o600)
+        return result
 
-    monkeypatch.setattr(wr, "validate_day_ready", fail_at_final_fence)
+    monkeypatch.setattr(wr, "export_workload_day", change_source_after_export)
     output_dir = tmp_path / "review"
-    with pytest.raises(OSError, match="changed"):
+    with pytest.raises(ValueError, match="changed"):
         wr.create_weekly_review_pack(
             log_dir,
             output_dir,

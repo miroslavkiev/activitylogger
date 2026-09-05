@@ -1,6 +1,6 @@
 # ActivityLogger locked product decisions
 
-**Status:** current product boundary for ActivityLogger 4.5.1.
+**Status:** current product boundary for ActivityLogger 4.6.0.
 
 This file owns the product boundary for all feature specs. [`00-MASTER.md`](00-MASTER.md) owns the full cross-feature contract, and [`IMPL-STATUS.md`](IMPL-STATUS.md) owns current verification.
 

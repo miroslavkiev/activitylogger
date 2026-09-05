@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -221,6 +222,7 @@ def test_mixed_prepare_failure_keeps_legacy_fsync_without_duplicate(
         "commit_authoritative_transaction",
         lambda _root: {after.date(): "App - Window"},
     )
+    monkeypatch.setattr(il.time, "monotonic", lambda: il._file_flush_deadline)
     assert il.flush_to_file() is True
     assert legacy.read_text().count("before") == 1
 
@@ -354,7 +356,7 @@ def test_next_day_heartbeat_publishes_previous_day_after_commit(monkeypatch):
         "publish_day_ready",
         lambda _root, day: events.append(("ready", day)),
     )
-    monkeypatch.setattr(il, "authoritative_day_present", lambda *_args: True)
+    monkeypatch.setattr(al, "inspect_analysis_day", lambda *_args, **_kwargs: SimpleNamespace(integrity_ok=True, invalid_marker=False, ready=False))
 
     assert il.flush_to_file() is True
     assert events == [
@@ -371,8 +373,7 @@ def test_ready_proof_failure_stops_after_durable_commit(monkeypatch):
         il, "prepare_authoritative_transaction", lambda *_args: {}
     )
     monkeypatch.setattr(il, "commit_authoritative_transaction", lambda _root: {})
-    monkeypatch.setattr(il, "authoritative_day_present", lambda *_args: True)
-    monkeypatch.setattr(il, "validate_day_ready", lambda *_args: False)
+    monkeypatch.setattr(al, "inspect_analysis_day", lambda *_args, **_kwargs: SimpleNamespace(integrity_ok=True, invalid_marker=False, ready=False))
     monkeypatch.setattr(
         il,
         "publish_day_ready",
@@ -392,7 +393,7 @@ def test_heartbeat_skips_ready_proof_for_absent_previous_day(monkeypatch):
         il, "prepare_authoritative_transaction", lambda *_args: {}
     )
     monkeypatch.setattr(il, "commit_authoritative_transaction", lambda _root: {})
-    monkeypatch.setattr(il, "authoritative_day_present", lambda *_args: False)
+    monkeypatch.setattr(al, "inspect_analysis_day", lambda *_args, **_kwargs: SimpleNamespace(integrity_ok=False, invalid_marker=False, ready=False))
     monkeypatch.setattr(
         il,
         "publish_day_ready",

@@ -334,7 +334,8 @@ def test_parser_and_export_errors_do_not_expose_hostile_payload(tmp_path):
     assert completed.returncode == 1
     assert secret not in completed.stdout
     assert secret not in completed.stderr
-    assert "error=compact export failed" in completed.stderr
+    assert "error=" in completed.stderr
+    assert "Recovery help" in completed.stderr
 
 
 def test_export_rejects_current_day_invalid_marker_and_intent_mismatch(tmp_path):
@@ -351,7 +352,7 @@ def test_export_rejects_current_day_invalid_marker_and_intent_mismatch(tmp_path)
     _analysis, invalid_path = al.shadow_paths(invalid_logs, DAY)
     invalid_path.write_text("invalid\n", encoding="utf-8")
     os.chmod(invalid_path, 0o600)
-    with pytest.raises(Exception, match="invalid"):
+    with pytest.raises(Exception, match="could not be verified"):
         av.export_compact_day(
             invalid_logs,
             tmp_path / "invalid-output",
@@ -362,7 +363,7 @@ def test_export_rejects_current_day_invalid_marker_and_intent_mismatch(tmp_path)
     mismatch_logs = tmp_path / "mismatch" / "logs"
     wrong_digest = al._records_digest((replace(records[0], payload="different"),))
     _commit_day(mismatch_logs, records, intent_digest=wrong_digest)
-    with pytest.raises(Exception, match="intent|match"):
+    with pytest.raises(Exception, match="could not be verified"):
         av.export_compact_day(
             mismatch_logs,
             tmp_path / "mismatch-output",
@@ -609,7 +610,7 @@ def test_v3_pilot_groups_clicks_preserves_evidence_and_stays_private(
         return real_validate(path, day)
 
     monkeypatch.setattr(av, "validate_day_ready", mutate_before_final_fence)
-    with pytest.raises(OSError, match="changed") as error:
+    with pytest.raises(ValueError, match="changed") as error:
         av.export_workload_day(
             log_dir,
             output_dir,
@@ -618,3 +619,21 @@ def test_v3_pilot_groups_clicks_preserves_evidence_and_stays_private(
         )
     assert "exact task evidence" not in str(error.value)
     assert output.read_bytes() == first
+
+
+def test_backwards_clock_context_index_uses_observed_range_without_reordering_evidence(tmp_path):
+    later = datetime.combine(WORKLOAD_DAY, datetime.min.time(), PLUS_TWO).replace(hour=12)
+    earlier = later - timedelta(hours=2)
+    records = (
+        _record("type", later, payload="first observed", heading="Editor", section_at=later),
+        _record("type", earlier, payload="second observed", heading="Editor", section_at=earlier),
+    )
+    _commit_ready_day(tmp_path / "logs", records)
+    result = av.export_workload_day(tmp_path / "logs", tmp_path / "review", WORKLOAD_DAY, today=WORKLOAD_DAY + timedelta(days=1))
+    text = (tmp_path / "review" / result.output_file).read_text()
+    index_text = text.split("## Context index\n\n", 1)[1].split("## Work spans", 1)[0]
+    context = json.loads(next(line[2:] for line in index_text.splitlines() if line.startswith("- ")))
+    assert context["first"].startswith("10:00:00")
+    assert context["last"].startswith("12:00:00")
+    assert context["spans"] == 2
+    assert text.index("first observed") < text.index("second observed")

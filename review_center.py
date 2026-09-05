@@ -5,25 +5,31 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from analysis_log import ANALYSIS_FORMAT_V2
 from analysis_view import DEFAULT_OUTPUT_DIR, workload_view_path
 from operator_controls import (
+    OUTCOMES_NAME,
     health_report,
     record_review_outcome,
     set_manual_pause,
     storage_report,
 )
+from operator_errors import OperatorError, safe_error_message
+from private_files import open_private_file, read_private_bytes
 from weekly_review import (
     INDEX_NAME,
     PROMPT_NAME,
     WEEKLY_PACK_FORMAT,
     create_weekly_review_pack,
+    weekly_pack_name,
+    weekly_window_dates,
     weekly_window_status,
 )
 
@@ -55,6 +61,8 @@ try:
         NSScrollView,
         NSStackView,
         NSTextField,
+        NSTabView,
+        NSTabViewItem,
         NSUserInterfaceLayoutOrientationHorizontal,
         NSUserInterfaceLayoutOrientationVertical,
         NSView,
@@ -81,13 +89,22 @@ class ReviewCenterSnapshot:
     health: str
     freshness: str
     pause_state: str
-    manual_paused: bool
+    manual_paused: bool | None
     can_toggle_pause: bool
     pack_state: str
     coverage: str
     can_prepare: bool
     can_show: bool
     storage: str
+    capture_state: str = "unknown"
+    pack_status: str = "unready"
+    pause_reasons: tuple[str, ...] = ()
+    checked_at: str = "Not checked"
+    problems: str = ""
+    quality: str = ""
+    can_show_results: bool = False
+    runtime_state_updated_at: str | None = None
+    runtime_state_age_seconds: int | None = None
 
 
 OUTCOME_VALUES = {
@@ -96,31 +113,32 @@ OUTCOME_VALUES = {
     "No action": "ignored",
 }
 MAX_REVIEW_INDEX_BYTES = 1024 * 1024
+MAX_OUTCOME_CHARACTERS = 4000
+PAUSE_REASON_TEXT = {
+    "manual": "manual pause",
+    "secure_app": "secure app",
+    "secure_field": "secure or unverified field",
+    "review_window": "Review Center window",
+    "storage": "storage needs attention",
+}
 
 
-def _open_private_file(path: Path) -> tuple[int, os.stat_result]:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    flags |= getattr(os, "O_NONBLOCK", 0)
-    fd = os.open(path, flags)
-    try:
-        info = os.fstat(fd)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
-            or info.st_mode & 0o077
-            or info.st_nlink != 1
-        ):
-            raise OSError("refusing unsafe review file")
-        return fd, info
-    except Exception:
-        os.close(fd)
-        raise
+def _capture_status(state: str, reasons: tuple[str, ...], window_paused: bool) -> str:
+    if state == "stopped":
+        return "Capture is stopped."
+    labels = [PAUSE_REASON_TEXT[reason] for reason in reasons if reason in PAUSE_REASON_TEXT]
+    if window_paused and "Review Center window" not in labels:
+        labels.append("Review Center window")
+    if window_paused or state == "paused":
+        detail = ", ".join(labels) or "privacy check"
+        suffix = " Other capture state is unverified." if state == "unknown" else ""
+        return f"Capture is paused: {detail}.{suffix}"
+    return "Capture is active." if state == "active" else "Capture state is unverified."
 
 
 def _private_file_is_safe(path: Path) -> bool:
     try:
-        fd, _info = _open_private_file(path)
+        fd, _info = open_private_file(path)
     except OSError:
         return False
     os.close(fd)
@@ -129,45 +147,9 @@ def _private_file_is_safe(path: Path) -> bool:
 
 def _private_index_bytes(path: Path) -> bytes | None:
     try:
-        fd, before = _open_private_file(path)
+        return read_private_bytes(path, max_bytes=MAX_REVIEW_INDEX_BYTES)
     except OSError:
         return None
-    try:
-        if before.st_size > MAX_REVIEW_INDEX_BYTES:
-            return None
-        chunks: list[bytes] = []
-        size = 0
-        while chunk := os.read(fd, min(64 * 1024, MAX_REVIEW_INDEX_BYTES + 1 - size)):
-            chunks.append(chunk)
-            size += len(chunk)
-            if size > MAX_REVIEW_INDEX_BYTES:
-                return None
-        after = os.fstat(fd)
-        if (
-            before.st_dev,
-            before.st_ino,
-            before.st_size,
-            before.st_mtime_ns,
-            before.st_ctime_ns,
-            before.st_mode,
-            before.st_uid,
-            before.st_nlink,
-        ) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-            after.st_ctime_ns,
-            after.st_mode,
-            after.st_uid,
-            after.st_nlink,
-        ) or size != before.st_size:
-            return None
-        return b"".join(chunks)
-    except OSError:
-        return None
-    finally:
-        os.close(fd)
 
 
 def _is_sha256(value: object) -> bool:
@@ -239,106 +221,146 @@ class ReviewCenterModel:
         today: date | None = None,
     ) -> ReviewCenterSnapshot:
         current_day = today or datetime.now().astimezone().date()
-        health = health_report(self.log_dir, current_day, home=self.home)
-        storage = storage_report(
-            self.log_dir,
-            output_dir=self.output_dir,
-            today=current_day,
-        )
-        window = weekly_window_status(
-            self.log_dir,
-            end,
-            days,
-            today=current_day,
-        )
+        checked_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        inspections = {}
+        errors = {}
+        try:
+            health = health_report(
+                self.log_dir, current_day, home=self.home, inspections=inspections
+            )
+        except Exception as error:
+            health = {}
+            errors["health"] = safe_error_message(error)
+        try:
+            storage = storage_report(
+                self.log_dir, output_dir=self.output_dir, today=current_day,
+                inspections=inspections,
+            )
+        except Exception as error:
+            storage = {}
+            errors["storage"] = safe_error_message(error)
+        try:
+            window = weekly_window_status(
+                self.log_dir, end, days, today=current_day, inspections=inspections
+            )
+        except Exception as error:
+            window = None
+            errors["window"] = safe_error_message(error)
 
         running = health.get("running") is True
-        manual_paused = health.get("manual_paused") is True
-        capture_paused = health.get("capture_paused") is True
-        health_issues = _health_issues(health)
-        if health_issues:
-            prefix = (
-                "Logger is running, but health is degraded"
-                if running
-                else "Logger is not running, and health is degraded"
-            )
-            health_text = f"{prefix}: {'; '.join(health_issues)}."
-        elif not running:
-            health_text = "Logger is not running."
-        elif capture_paused:
-            health_text = "Logger is running. Capture is paused."
+        valid_state = health.get("runtime_state_valid") is True
+        manual = health.get("manual_paused") if valid_state else None
+        manual_paused = manual if type(manual) is bool else None
+        capture = health.get("capture_paused") if valid_state else None
+        capture_state = (
+            "unknown" if not health or (running and type(capture) is not bool)
+            else "stopped" if not running
+            else "paused" if capture or health.get("storage_blocked") is True
+            else "active"
+        )
+        reasons = tuple(
+            reason for reason in health.get("pause_reasons", ())
+            if reason in PAUSE_REASON_TEXT
+        )
+        issues = _health_issues(health) if health else ()
+        if "health" in errors:
+            health_text = "Logger health is unavailable. " + errors["health"]
+        elif issues:
+            prefix = "Logger is running" if running else "Logger is not running"
+            health_text = f"{prefix}, but health is degraded: {'; '.join(issues)}."
         else:
-            health_text = "Logger is running. Capture is active."
-
+            health_text = "Logger is running." if running else "Logger is not running."
         freshness_value = health.get("freshness_seconds")
-        if isinstance(freshness_value, int):
-            freshness = f"Last verified safe write was {freshness_value} seconds ago."
-        else:
-            freshness = "Last verified safe write is not available."
+        freshness = (
+            f"Last verified safe write was {freshness_value} seconds ago."
+            if isinstance(freshness_value, int)
+            else "Last verified safe write is not available."
+        )
+        pause_state = (
+            "Manual privacy pause is on." if manual_paused is True
+            else "Manual privacy pause is off." if manual_paused is False
+            else "Manual privacy state is unverified."
+        )
 
-        if manual_paused:
-            pause_state = "Manual privacy pause is on."
-        elif running:
-            pause_state = "Manual privacy pause is off."
-        else:
-            pause_state = "Manual privacy control is unavailable."
-
-        pack_path = self.output_dir / window.pack_name
-        pack_present = pack_path.exists() or pack_path.is_symlink()
         prepared_pack = self.prepared_pack(end, days, today=current_day)
+        pack_path = self.output_dir / weekly_pack_name(end, days)
+        pack_present = pack_path.exists() or pack_path.is_symlink()
         if prepared_pack is not None:
-            pack_state = (
-                f"Review files are ready for {window.start} through {window.end}."
-            )
+            pack_status = "prepared"
+            selected = weekly_window_dates(end, days)
+            pack_state = f"Review files are ready for {selected[0]} through {selected[-1]}."
         elif pack_present:
+            pack_status = "blocked"
             pack_state = "The selected review files are incomplete or unsafe."
-        elif window.ready:
-            pack_state = (
-                f"Ready to create files for {window.start} through {window.end}."
-            )
-        else:
+        elif window is not None and window.ready:
+            pack_status = "ready"
+            pack_state = f"Ready to create files for {window.start} through {window.end}."
+        elif window is not None:
+            pack_status = "unready"
             issue_count = sum(item.state != "ready" for item in window.day_statuses)
             noun = "day needs" if issue_count == 1 else "days need"
             pack_state = f"Not ready. {issue_count} selected {noun} attention."
+        else:
+            pack_status = "unavailable"
+            pack_state = "Selected day checks are unavailable. " + errors["window"]
 
-        storage_text = (
-            f"{_format_bytes(storage.get('total_private_log_bytes'))} of private logs. "
-            f"{storage.get('completed_days', 0)} completed day(s), "
-            f"{storage.get('review_packs', 0)} review folder(s), "
-            f"{storage.get('missing_readiness_proofs', 0)} missing safety check(s), "
-            f"{storage.get('unsafe_files', 0)} unsafe item(s)."
-        )
-        coverage = ["File checks do not prove that every activity was captured."]
+        if "storage" in errors:
+            storage_text = "Storage summary is unavailable. " + errors["storage"]
+        else:
+            storage_text = (
+                f"{_format_bytes(storage.get('total_private_log_bytes'))} of private logs. "
+                f"{_format_bytes(storage.get('private_review_bytes', 0))} of review files. "
+                f"{storage.get('completed_days', 0)} completed day(s), "
+                f"{storage.get('review_packs', 0)} review folder(s)."
+            )
+        problem_lines = [
+            f"{item['day']}: {item['state']}."
+            for item in storage.get("problem_days", ())
+        ]
+        for key, label in (
+            ("malformed_day_count", "file(s) with an invalid date"),
+            ("unsafe_files", "unsafe log item(s)"),
+            ("unsafe_review_items", "unsafe review item(s)"),
+            ("incomplete_review_packs", "incomplete review folder(s)"),
+        ):
+            if storage.get(key):
+                problem_lines.append(f"{storage[key]} {label}.")
+        problems = "\n".join(problem_lines) or "No storage or completed-day problems reported."
+        if "storage" in errors:
+            problems = "Storage and completed-day problems could not be checked."
         state_help = {
             "active": "is still active. Choose an earlier end date.",
             "unsupported": "uses an older format. Choose newer dates.",
-            "invalid": (
-                "failed a safety check. Repair that day's files, then refresh."
-            ),
-            "missing": (
-                "is missing required files. Restore them or choose other dates, "
-                "then refresh."
-            ),
-            "unready": (
-                "has not passed its safety check. Repair that day's files, then refresh."
-            ),
+            "invalid": "failed a safety check. Use Recovery help before changing its files.",
+            "missing": "is missing required files. Restore them or choose other dates; see Recovery help.",
+            "unready": "has not passed its safety check. Use Recovery help before changing its files.",
         }
-        coverage.extend(
-            f"{item.day} {state_help.get(item.state, 'needs attention.')}"
-            for item in window.day_statuses
-            if item.state != "ready"
-        )
+        coverage = ["File checks do not prove that every activity was captured."]
+        quality = []
+        total_bytes = total_workload = 0
+        for item in window.day_statuses if window is not None else ():
+            if item.state != "ready":
+                coverage.append(f"{item.day} {state_help.get(item.state, 'needs attention.')}")
+            data = getattr(item, "quality", {})
+            total_bytes += data.get("source_bytes", 0)
+            total_workload += data.get("workload_events", 0)
+            quality.extend(f"{item.day}: {warning}" for warning in data.get("warnings", ()))
+        if window is not None:
+            quality.insert(0, f"Source size: {_format_bytes(total_bytes)}. {total_workload} observed workload events.")
+            if len(quality) == 1:
+                quality.append("No extra context quality warnings reported. This does not prove full capture.")
+        else:
+            quality.append("Context quality could not be checked. Use the pack's quality and loss notes.")
         return ReviewCenterSnapshot(
-            health=health_text,
-            freshness=freshness,
-            pause_state=pause_state,
-            manual_paused=manual_paused,
-            can_toggle_pause=running,
-            pack_state=pack_state,
-            coverage="\n".join(coverage),
-            can_prepare=window.ready and not pack_present,
-            can_show=prepared_pack is not None,
-            storage=storage_text,
+            health=health_text, freshness=freshness, pause_state=pause_state,
+            manual_paused=manual_paused, can_toggle_pause=running,
+            pack_state=pack_state, coverage="\n".join(coverage),
+            can_prepare=pack_status == "ready", can_show=prepared_pack is not None,
+            storage=storage_text, capture_state=capture_state, pack_status=pack_status,
+            pause_reasons=reasons, checked_at=checked_at, problems=problems,
+            quality="\n".join(quality), can_show_results=self.saved_results() is not None,
+            runtime_state_updated_at=health.get("state_updated_at") if valid_state else None,
+            runtime_state_age_seconds=health.get("state_age_seconds") if valid_state else None,
         )
 
     def prepared_pack(
@@ -351,21 +373,8 @@ class ReviewCenterModel:
         """Return the exact selected pack only when every private path is safe."""
         if days not in (5, 7):
             return None
-        window = weekly_window_status(self.log_dir, end, days, today=today)
-        selected_days = tuple(
-            end - timedelta(days=offset) for offset in range(days - 1, -1, -1)
-        )
-        if (
-            window.start,
-            window.end,
-            window.days,
-        ) != (
-            selected_days[0].isoformat(),
-            selected_days[-1].isoformat(),
-            days,
-        ):
-            return None
-        pack_dir = self.output_dir / window.pack_name
+        selected_days = weekly_window_dates(end, days)
+        pack_dir = self.output_dir / weekly_pack_name(end, days)
         for path in (self.output_dir, pack_dir):
             try:
                 info = path.lstat()
@@ -461,19 +470,24 @@ class ReviewCenterModel:
     def set_manual_pause(self, paused: bool):
         return set_manual_pause(paused, home=self.home)
 
+    def saved_results(self) -> Path | None:
+        try:
+            info = self.output_dir.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                    or stat.S_IMODE(info.st_mode) != 0o700):
+                return None
+        except OSError:
+            return None
+        path = self.output_dir / OUTCOMES_NAME
+        return path if _private_file_is_safe(path) else None
+
     def record_outcome(
-        self,
-        week: date,
-        outcome: str,
-        value_result: str,
-        notes: str,
+        self, week: date, days: int, outcome: str, value_result: str, notes: str,
     ) -> Path:
+        if self.prepared_pack(week, days) is None:
+            raise OperatorError("incomplete_window")
         return record_review_outcome(
-            week,
-            outcome,
-            value_result,
-            notes,
-            output_dir=self.output_dir,
+            week, outcome, value_result, notes, days=days, output_dir=self.output_dir,
         )
 
 
@@ -508,6 +522,29 @@ if APPKIT_AVAILABLE:
         field.setAccessibilityLabel_(text)
         return field
 
+    def _scroll_column(views):
+        root = _column(*views)
+        root.setSpacing_(16)
+        root.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, 640, 500))
+        scroll.setBorderType_(NSNoBorder)
+        scroll.setHasVerticalScroller_(True)
+        scroll.setAutohidesScrollers_(True)
+        scroll.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        document = NSView.alloc().initWithFrame_(scroll.bounds())
+        document.setAutoresizingMask_(NSViewWidthSizable)
+        document.addSubview_(root)
+        scroll.setDocumentView_(document)
+        NSLayoutConstraint.activateConstraints_([
+            root.leadingAnchor().constraintEqualToAnchor_constant_(document.leadingAnchor(), 16),
+            root.trailingAnchor().constraintEqualToAnchor_constant_(document.trailingAnchor(), -16),
+            root.topAnchor().constraintEqualToAnchor_constant_(document.topAnchor(), 16),
+            root.bottomAnchor().constraintLessThanOrEqualToAnchor_constant_(document.bottomAnchor(), -16),
+        ])
+        for view in views:
+            view.widthAnchor().constraintEqualToAnchor_(root.widthAnchor()).setActive_(True)
+        return scroll, document, root
+
     def _button(title: str, target, action: bytes):
         button = NSButton.buttonWithTitle_target_action_(title, target, action)
         button.setBezelStyle_(NSBezelStyleRounded)
@@ -532,6 +569,7 @@ if APPKIT_AVAILABLE:
             self.busy = False
             self.last_snapshot = None
             self.initial_scroll_pending = True
+            self.displayed_selection = None
             self._build_window()
             return self
 
@@ -555,7 +593,7 @@ if APPKIT_AVAILABLE:
             self.window.setDelegate_(self)
             self.window.center()
 
-            title = _heading("Weekly Activity Review")
+            title = _heading("ActivityLogger")
             title.setFont_(NSFont.boldSystemFontOfSize_(20))
             subtitle = _label(
                 "Create private review files from recent activity. Use the files with "
@@ -571,7 +609,7 @@ if APPKIT_AVAILABLE:
             self.review_pause_notice = _label(
                 "While this window is visible, it adds a privacy pause. Closing or "
                 "minimizing removes this window's pause. Capture may stay paused for "
-                "manual or secure reasons.",
+                "manual, secure, or storage reasons.",
                 wrap=True,
             )
             self.review_pause_notice.setAccessibilityLabel_(
@@ -657,9 +695,17 @@ if APPKIT_AVAILABLE:
                 "Example: Saved 20 minutes each Friday"
             )
             self.value_field.setAccessibilityLabel_("Weekly review value result")
+            self.value_field.setDelegate_(self)
             self.notes_field = NSTextField.alloc().init()
             self.notes_field.setPlaceholderString_("Optional notes")
             self.notes_field.setAccessibilityLabel_("Weekly review notes")
+            self.notes_field.setDelegate_(self)
+            self.length_label = _label("Each text field allows up to 4,000 characters.", wrap=True)
+            self.length_label.setAccessibilityLabel_("Review text limits")
+            self.clear_draft_button = _button("Clear draft", self, b"clearDraftAction:")
+            self.clear_draft_button.setAccessibilityHelp_("Clear this unsaved result and its notes.")
+            self.show_results_button = _button("Show saved results", self, b"showResultsAction:")
+            self.show_results_button.setAccessibilityHelp_("Select the private saved-result journal in Finder.")
             self.record_button = _button(
                 "Save review result", self, b"recordOutcomeAction:"
             )
@@ -677,12 +723,22 @@ if APPKIT_AVAILABLE:
 
             self.health_label = _label("Loading logger health...", wrap=True)
             self.health_label.setAccessibilityLabel_("Logger health")
+            self.capture_label = _label("Capture state is unverified.", wrap=True)
+            self.capture_label.setAccessibilityLabel_("Capture state and pause reasons")
+            self.checked_label = _label("Status has not been checked.", wrap=True)
+            self.checked_label.setAccessibilityLabel_("Status checked time")
             self.freshness_label = _label("Loading freshness...", wrap=True)
             self.freshness_label.setAccessibilityLabel_("Logger freshness")
             self.pause_state_label = _label("Loading manual pause...", wrap=True)
             self.pause_state_label.setAccessibilityLabel_("Manual privacy state")
             self.storage_label = _label("Loading storage summary...", wrap=True)
             self.storage_label.setAccessibilityLabel_("Private storage summary")
+            self.problems_label = _label("Checking completed days...", wrap=True)
+            self.problems_label.setAccessibilityLabel_("Storage and completed-day problems")
+            self.quality_label = _label("Checking context quality...", wrap=True)
+            self.quality_label.setAccessibilityLabel_("Selected review context quality")
+            self.recovery_button = _button("Recovery help", self, b"recoveryAction:")
+            self.recovery_button.setAccessibilityHelp_("Open the local guide for day checks and safe recovery.")
             self.pause_button = _button("Turn on manual pause", self, b"pauseAction:")
             self.pause_button.setAccessibilityHelp_(
                 "Pause or resume capture through the shared manual privacy control."
@@ -703,6 +759,7 @@ if APPKIT_AVAILABLE:
                 ),
                 self.pack_state_label,
                 self.coverage_label,
+                self.quality_label,
                 self.prepare_button,
                 self.prepare_help_label,
             )
@@ -721,139 +778,117 @@ if APPKIT_AVAILABLE:
                 self.value_field,
                 _label("Notes (optional)"),
                 self.notes_field,
-                self.record_button,
+                self.length_label,
+                _row(self.record_button, self.clear_draft_button),
+                self.show_results_button,
                 self.record_help_label,
             )
-            logger_section = _column(
-                _heading("Logger and private storage"),
-                self.health_label,
-                self.freshness_label,
-                self.pause_state_label,
-                self.storage_label,
+            daily_views = [
+                _heading("Daily status"), self.health_label, self.capture_label,
+                self.checked_label, self.freshness_label, self.pause_state_label,
                 _row(self.pause_button, self.refresh_button),
-            )
-            views = [
-                title,
-                subtitle,
-                self.limit_label,
-                self.review_pause_notice,
-                step_one,
-                step_two,
-                step_three,
-                self.action_status_label,
-                logger_section,
+                _heading("Private storage and completed days"), self.storage_label,
+                self.problems_label, self.recovery_button,
             ]
-            root = NSStackView.stackViewWithViews_(views)
-            root.setOrientation_(NSUserInterfaceLayoutOrientationVertical)
-            root.setAlignment_(NSLayoutAttributeLeading)
-            root.setSpacing_(18)
-            root.setTranslatesAutoresizingMaskIntoConstraints_(False)
-            content = self.window.contentView()
-            self.scroll_view = NSScrollView.alloc().initWithFrame_(content.bounds())
-            self.scroll_view.setBorderType_(NSNoBorder)
-            self.scroll_view.setHasVerticalScroller_(True)
-            self.scroll_view.setAutohidesScrollers_(True)
-            self.scroll_view.setAutoresizingMask_(
-                NSViewWidthSizable | NSViewHeightSizable
-            )
-            self.scroll_document = NSView.alloc().initWithFrame_(content.bounds())
-            self.scroll_document.setAutoresizingMask_(NSViewWidthSizable)
-            self.scroll_document.addSubview_(root)
-            self.scroll_view.setDocumentView_(self.scroll_document)
-            content.addSubview_(self.scroll_view)
-            NSLayoutConstraint.activateConstraints_(
-                [
-                    root.leadingAnchor().constraintEqualToAnchor_constant_(
-                        self.scroll_document.leadingAnchor(), 20
-                    ),
-                    root.trailingAnchor().constraintEqualToAnchor_constant_(
-                        self.scroll_document.trailingAnchor(), -20
-                    ),
-                    root.topAnchor().constraintEqualToAnchor_constant_(
-                        self.scroll_document.topAnchor(), 18
-                    ),
-                    root.bottomAnchor().constraintLessThanOrEqualToAnchor_constant_(
-                        self.scroll_document.bottomAnchor(), -18
-                    ),
-                ]
-            )
-            for view in views:
-                view.widthAnchor().constraintEqualToAnchor_(
-                    root.widthAnchor()
-                ).setActive_(True)
+            weekly_views = [
+                _heading("Weekly Activity Review"), subtitle, self.limit_label,
+                step_one, step_two, step_three,
+            ]
             for section, fields in (
-                (
-                    step_one,
-                    (
-                        step_one_text,
-                        self.pack_state_label,
-                        self.coverage_label,
-                        self.prepare_help_label,
-                    ),
-                ),
-                (
-                    step_two,
-                    (step_two_text, pack_warning, self.show_help_label),
-                ),
-                (
-                    step_three,
-                    (
-                        step_three_text,
-                        self.value_field,
-                        self.notes_field,
-                        self.record_help_label,
-                    ),
-                ),
-                (
-                    logger_section,
-                    (
-                        self.health_label,
-                        self.freshness_label,
-                        self.pause_state_label,
-                        self.storage_label,
-                    ),
-                ),
+                (step_one, (step_one_text, self.pack_state_label, self.coverage_label,
+                            self.quality_label, self.prepare_help_label)),
+                (step_two, (step_two_text, pack_warning, self.show_help_label)),
+                (step_three, (step_three_text, self.value_field, self.notes_field,
+                              self.length_label, self.record_help_label)),
             ):
                 for field in fields:
                     field.widthAnchor().constraintEqualToAnchor_(
                         section.widthAnchor()
                     ).setActive_(True)
-            self.root_stack = root
+            self.daily_panel = _scroll_column(daily_views)
+            self.weekly_panel = _scroll_column(weekly_views)
+            self.panels = (self.daily_panel, self.weekly_panel)
+            self.tab_view = NSTabView.alloc().initWithFrame_(NSMakeRect(0, 0, 640, 520))
+            self.tab_view.setTranslatesAutoresizingMaskIntoConstraints_(False)
+            self.tab_view.setAccessibilityLabel_("ActivityLogger tasks")
+            for identifier, name, panel in (
+                ("daily", "Daily status", self.daily_panel),
+                ("weekly", "Weekly review", self.weekly_panel),
+            ):
+                item = NSTabViewItem.alloc().initWithIdentifier_(identifier)
+                item.setLabel_(name)
+                item.setView_(panel[0])
+                item.setInitialFirstResponder_(self.pause_button if identifier == "daily" else self.end_picker)
+                self.tab_view.addTabViewItem_(item)
+            self.tab_view.selectTabViewItemAtIndex_(0)
+            self.tab_view.setDelegate_(self)
+            shell = _column(title, self.review_pause_notice, self.tab_view, self.action_status_label)
+            shell.setSpacing_(12)
+            shell.setTranslatesAutoresizingMaskIntoConstraints_(False)
+            content = self.window.contentView()
+            content.addSubview_(shell)
+            NSLayoutConstraint.activateConstraints_([
+                shell.leadingAnchor().constraintEqualToAnchor_constant_(content.leadingAnchor(), 20),
+                shell.trailingAnchor().constraintEqualToAnchor_constant_(content.trailingAnchor(), -20),
+                shell.topAnchor().constraintEqualToAnchor_constant_(content.topAnchor(), 18),
+                shell.bottomAnchor().constraintEqualToAnchor_constant_(content.bottomAnchor(), -18),
+                self.tab_view.heightAnchor().constraintGreaterThanOrEqualToConstant_(300),
+            ])
+            for view in (title, self.review_pause_notice, self.tab_view, self.action_status_label):
+                view.widthAnchor().constraintEqualToAnchor_(shell.widthAnchor()).setActive_(True)
+            self.tab_view.setContentHuggingPriority_forOrientation_(1, NSUserInterfaceLayoutOrientationVertical)
             self.pack_warning = pack_warning
+            self.displayed_selection = (self._selected_date(), self._selected_days())
+            self._select_active_panel()
             self._layout_scroll_content()
             self.window.setAutorecalculatesKeyViewLoop_(False)
-            self.window.setInitialFirstResponder_(self.end_picker)
-            controls = (
-                self.end_picker,
-                self.days_popup,
-                self.prepare_button,
-                self.show_button,
-                self.outcome_popup,
-                self.value_field,
-                self.notes_field,
-                self.record_button,
-                self.pause_button,
-                self.refresh_button,
-            )
-            for current, following in zip(controls, controls[1:]):
-                current.setNextKeyView_(following)
-            controls[-1].setNextKeyView_(controls[0])
+            self.window.setInitialFirstResponder_(self.pause_button)
+            self._update_key_loop()
             self._set_busy(False)
 
         @objc.python_method
-        def _layout_scroll_content(self) -> None:
-            clip = self.scroll_view.contentSize()
-            needed = self.root_stack.fittingSize().height + 36
-            self.scroll_document.setFrameSize_(
-                NSMakeSize(clip.width, max(clip.height, needed))
+        def _select_active_panel(self) -> None:
+            weekly = self.tab_view.selectedTabViewItem().identifier() == "weekly"
+            self.scroll_view, self.scroll_document, self.root_stack = (
+                self.weekly_panel if weekly else self.daily_panel
             )
+
+        @objc.python_method
+        def _update_key_loop(self) -> None:
+            if self.tab_view.selectedTabViewItem().identifier() == "weekly":
+                controls = (self.tab_view, self.end_picker, self.days_popup,
+                            self.prepare_button, self.show_button, self.outcome_popup,
+                            self.value_field, self.notes_field, self.record_button,
+                            self.clear_draft_button, self.show_results_button)
+            else:
+                controls = (self.tab_view, self.pause_button, self.refresh_button,
+                            self.recovery_button)
+            for current, following in zip(controls, (*controls[1:], controls[0])):
+                current.setNextKeyView_(following)
+
+        def tabView_didSelectTabViewItem_(self, _tab_view, _item):
+            if not hasattr(self, "panels"):
+                return
+            self._select_active_panel()
+            self._update_key_loop()
+            self._layout_scroll_content()
+            self._scroll_to_visual_top()
+            self._set_action_status("Daily status selected." if _item.identifier() == "daily"
+                                    else "Weekly review selected.")
+
+        @objc.python_method
+        def _layout_scroll_content(self) -> None:
+            for scroll, document, root in self.panels:
+                clip = scroll.contentSize()
+                document.setFrameSize_(NSMakeSize(clip.width, document.frame().size.height))
+                needed = root.fittingSize().height + 32
+                document.setFrameSize_(NSMakeSize(clip.width, max(clip.height, needed)))
 
         @objc.python_method
         def _scroll_to_visual_top(self) -> None:
             clip = self.scroll_view.contentSize()
-            document_height = self.scroll_document.frame().size.height
-            point = NSMakePoint(0, max(0, document_height - clip.height))
-            self.scroll_view.contentView().scrollToPoint_(point)
+            height = self.scroll_document.frame().size.height
+            self.scroll_view.contentView().scrollToPoint_(NSMakePoint(0, max(0, height - clip.height)))
             self.scroll_view.reflectScrolledClipView_(self.scroll_view.contentView())
 
         @objc.python_method
@@ -875,9 +910,7 @@ if APPKIT_AVAILABLE:
 
         @objc.python_method
         def _selected_days(self) -> int:
-            return (
-                7 if str(self.days_popup.titleOfSelectedItem()).startswith("7") else 5
-            )
+            return (5, 7)[self.days_popup.indexOfSelectedItem()]
 
         @objc.python_method
         def _refresh_date_limit(self, today: date | None = None) -> None:
@@ -885,10 +918,35 @@ if APPKIT_AVAILABLE:
                 days=1
             )
             selected = self._selected_date()
-            self.end_picker.setMaxDate_(self._date_to_nsdate(new_limit))
-            if selected == self.date_limit:
+            picker_limit = max(selected, new_limit) if self._has_draft() else new_limit
+            self.end_picker.setMaxDate_(self._date_to_nsdate(picker_limit))
+            if selected == self.date_limit and not self._has_draft() and not self.busy:
                 self.end_picker.setDateValue_(self._date_to_nsdate(new_limit))
+            elif self._has_draft():
+                self.end_picker.setDateValue_(self._date_to_nsdate(selected))
             self.date_limit = new_limit
+            self._accept_review_selection((self._selected_date(), self._selected_days()))
+            self._update_action_controls()
+
+        @objc.python_method
+        def _accept_review_selection(self, selection: tuple[date, int]) -> None:
+            if selection == self.displayed_selection:
+                return
+            self.displayed_selection = selection
+            pack_state = "Selected review dates have not been checked. Refresh status."
+            coverage = "File checks do not prove that every activity was captured."
+            quality = "Context quality has not been checked for these dates."
+            if self.last_snapshot is not None:
+                self.last_snapshot = replace(
+                    self.last_snapshot, pack_state=pack_state, pack_status="unavailable",
+                    coverage=coverage, quality=quality, can_prepare=False, can_show=False,
+                )
+            for label, value in ((self.pack_state_label, pack_state),
+                                 (self.coverage_label, coverage), (self.quality_label, quality)):
+                label.setStringValue_(value)
+                NSAccessibilityPostNotification(label, NSAccessibilityValueChangedNotification)
+            self._update_action_controls()
+            self._layout_scroll_content()
 
         @objc.python_method
         def _set_window_privacy(self, active: bool) -> None:
@@ -915,7 +973,7 @@ if APPKIT_AVAILABLE:
 
         @objc.python_method
         def _restore_focus(self, control) -> None:
-            if control is not None and control.isEnabled():
+            if control is not None and control.isEnabled() and not control.isHiddenOrHasHiddenAncestor():
                 self.window.makeFirstResponder_(control)
 
         @objc.python_method
@@ -926,8 +984,29 @@ if APPKIT_AVAILABLE:
             self._update_action_controls()
 
         @objc.python_method
+        def _has_draft(self) -> bool:
+            return bool(self.outcome_popup.indexOfSelectedItem() or
+                        self.value_field.stringValue() or self.notes_field.stringValue())
+
+        @objc.python_method
+        def _text_within_limit(self) -> bool:
+            return all(len(str(field.stringValue())) <= MAX_OUTCOME_CHARACTERS
+                       for field in (self.value_field, self.notes_field))
+
+        def controlTextDidChange_(self, _notification):
+            self._update_action_controls()
+
+        def clearDraftAction_(self, _sender):
+            if not self.busy:
+                self._clear_result_fields()
+                self.end_picker.setMaxDate_(self._date_to_nsdate(self.date_limit))
+                if (self._selected_date(), self._selected_days()) != self.displayed_selection:
+                    self.selectionAction_(self.end_picker)
+                self._set_action_status("Draft cleared. You can choose other review dates.")
+
+        @objc.python_method
         def _selected_outcome(self) -> str | None:
-            return OUTCOME_VALUES.get(str(self.outcome_popup.titleOfSelectedItem()))
+            return (None, *OUTCOME_VALUES.values())[self.outcome_popup.indexOfSelectedItem()]
 
         @objc.python_method
         def _update_action_controls(self) -> None:
@@ -936,6 +1015,8 @@ if APPKIT_AVAILABLE:
             can_prepare = snapshot is not None and snapshot.can_prepare
             chosen = self._selected_outcome() is not None
             available = not self.busy
+            complete = self._selected_date() <= self.date_limit
+            within_limit = self._text_within_limit()
 
             self.refresh_button.setEnabled_(available)
             self.pause_button.setEnabled_(
@@ -943,12 +1024,21 @@ if APPKIT_AVAILABLE:
             )
             self.prepare_button.setEnabled_(available and can_prepare)
             self.show_button.setEnabled_(available and prepared)
-            self.record_button.setEnabled_(available and prepared and chosen)
+            self.record_button.setEnabled_(available and prepared and chosen and within_limit and complete)
+            self.clear_draft_button.setEnabled_(available and self._has_draft())
+            self.show_results_button.setEnabled_(
+                available and snapshot is not None and snapshot.can_show_results
+            )
             self.end_picker.setEnabled_(available)
             self.days_popup.setEnabled_(available)
-            self.outcome_popup.setEnabled_(available and prepared)
-            self.value_field.setEnabled_(available and prepared)
-            self.notes_field.setEnabled_(available and prepared)
+            editable = available and (prepared or self._has_draft())
+            self.outcome_popup.setEnabled_(editable)
+            self.value_field.setEnabled_(editable)
+            self.notes_field.setEnabled_(editable)
+            self.length_label.setStringValue_(
+                "Each text field allows up to 4,000 characters."
+                if within_limit else "Too much text. Shorten each field to 4,000 characters or fewer. Your draft is kept."
+            )
 
             if self.busy:
                 prepare_help = show_help = record_help = "Please wait for this action."
@@ -956,18 +1046,20 @@ if APPKIT_AVAILABLE:
                 prepare_help = "Checking selected days..."
                 show_help = record_help = "Wait for the selected day check."
             else:
-                blocked_existing = "incomplete or unsafe" in snapshot.pack_state
+                blocked_existing = snapshot.pack_status == "blocked"
                 if blocked_existing:
                     recovery = (
-                        "Move the existing folder aside or repair it, or choose other "
-                        "dates, then refresh."
+                        "Use Recovery help on Daily status before repairing or moving "
+                        "this folder, then refresh."
                     )
                     prepare_help = show_help = record_help = recovery
                 elif prepared:
                     prepare_help = "Review files already exist for these dates."
                     show_help = "Opens Finder and selects REVIEW_PROMPT.md."
                     record_help = (
-                        "Choose a result first."
+                        "The selected end date must be a completed day. Your draft is kept."
+                        if not complete else "Shorten the text before saving. Your draft is kept."
+                        if not within_limit else "Choose a result first."
                         if not chosen
                         else "Saves this result locally."
                     )
@@ -993,25 +1085,37 @@ if APPKIT_AVAILABLE:
             snapshot: ReviewCenterSnapshot,
             message: str,
             focus=None,
+            selection: tuple[date, int] | None = None,
         ) -> None:
+            current_selection = (self._selected_date(), self._selected_days())
+            if selection is not None and selection != current_selection:
+                self._accept_review_selection(current_selection)
+                self._set_busy(False)
+                self._start_refresh("Review dates changed. Status refreshed.", focus=focus)
+                return
             self.last_snapshot = snapshot
-            health = snapshot.health
-            if (
-                self.window_privacy_active
-                and health == "Logger is running. Capture is active."
-            ):
-                health = "Logger is running. Capture is paused for this window."
-            self.health_label.setStringValue_(health)
+            self.health_label.setStringValue_(snapshot.health)
+            self.capture_label.setStringValue_(
+                _capture_status(snapshot.capture_state, snapshot.pause_reasons, self.window_privacy_active)
+            )
+            checked = f"Status checked: {snapshot.checked_at}"
+            if snapshot.runtime_state_updated_at is not None:
+                checked += f"\nRuntime state updated: {snapshot.runtime_state_updated_at}"
+                if snapshot.runtime_state_age_seconds is not None:
+                    checked += f" ({snapshot.runtime_state_age_seconds} seconds old at check time)."
+            self.checked_label.setStringValue_(checked)
             self.freshness_label.setStringValue_(snapshot.freshness)
             self.pause_state_label.setStringValue_(snapshot.pause_state)
             self.pause_button.setTitle_(
                 "Turn off manual pause"
-                if snapshot.manual_paused
+                if snapshot.manual_paused is True
                 else "Turn on manual pause"
             )
             self.pack_state_label.setStringValue_(snapshot.pack_state)
             self.coverage_label.setStringValue_(snapshot.coverage)
             self.storage_label.setStringValue_(snapshot.storage)
+            self.problems_label.setStringValue_(snapshot.problems)
+            self.quality_label.setStringValue_(snapshot.quality)
             self.window.contentView().layoutSubtreeIfNeeded()
             self._layout_scroll_content()
             if self.initial_scroll_pending:
@@ -1020,19 +1124,20 @@ if APPKIT_AVAILABLE:
             self._set_busy(False)
             self._set_action_status(message)
             self._restore_focus(focus)
-            for field in (self.pack_state_label, self.coverage_label):
+            for field in (self.pack_state_label, self.coverage_label, self.capture_label,
+                          self.pause_state_label, self.problems_label, self.quality_label):
                 NSAccessibilityPostNotification(
                     field,
                     NSAccessibilityValueChangedNotification,
                 )
 
         @objc.python_method
-        def _finish_with_snapshot(self, snapshot, message: str, focus=None) -> None:
-            AppHelper.callAfter(self._apply_snapshot, snapshot, message, focus)
+        def _finish_with_snapshot(self, snapshot, message: str, focus=None, selection=None) -> None:
+            AppHelper.callAfter(self._apply_snapshot, snapshot, message, focus, selection)
 
         @objc.python_method
         def _finish_error(self, action: str, error: Exception, focus=None) -> None:
-            message = f"{action} failed ({type(error).__name__})."
+            message = f"{action}: {safe_error_message(error)}"
             AppHelper.callAfter(self._apply_action_result, message, focus)
 
         @objc.python_method
@@ -1047,10 +1152,12 @@ if APPKIT_AVAILABLE:
 
         @objc.python_method
         def _apply_outcome_result(self) -> None:
+            if self.last_snapshot is not None:
+                self.last_snapshot = replace(self.last_snapshot, can_show_results=True)
             self._clear_result_fields()
             self._apply_action_result(
                 "Review result saved locally.",
-                self.outcome_popup,
+                self.show_results_button,
             )
 
         @objc.python_method
@@ -1064,7 +1171,7 @@ if APPKIT_AVAILABLE:
             if self.busy:
                 return
             if focus is None:
-                focus = self.end_picker
+                focus = self.refresh_button
             end = self._selected_date()
             days = self._selected_days()
             self._set_busy(True)
@@ -1076,7 +1183,7 @@ if APPKIT_AVAILABLE:
                 except Exception as error:
                     self._finish_error("Refresh", error, focus)
                     return
-                self._finish_with_snapshot(snapshot, message, focus)
+                self._finish_with_snapshot(snapshot, message, focus, (end, days))
 
             threading.Thread(
                 target=work, daemon=True, name="review-center-refresh"
@@ -1086,7 +1193,14 @@ if APPKIT_AVAILABLE:
             self._start_refresh(focus=self.refresh_button)
 
         def selectionAction_(self, _sender):
-            self._clear_result_fields()
+            selection = (self._selected_date(), self._selected_days())
+            if self._has_draft() and selection != self.displayed_selection:
+                end, days = self.displayed_selection
+                self.end_picker.setDateValue_(self._date_to_nsdate(end))
+                self.days_popup.selectItemAtIndex_(0 if days == 5 else 1)
+                self._set_action_status("Save or clear this draft before changing review dates. Your draft is kept.")
+                return
+            self._accept_review_selection(selection)
             focus = (
                 _sender
                 if _sender in (self.end_picker, self.days_popup)
@@ -1126,6 +1240,7 @@ if APPKIT_AVAILABLE:
                     snapshot,
                     f"Created {result.pack_dir.name}. Continue to Step 2.",
                     self.show_button,
+                    (end, days),
                 )
 
             threading.Thread(
@@ -1141,26 +1256,46 @@ if APPKIT_AVAILABLE:
                 pack_dir = self.model.prepared_pack(end, days)
                 if pack_dir is None:
                     self._set_action_status(
-                        "Review files are missing, incomplete, or unsafe. Move the "
-                        "existing folder aside or repair it, or choose other dates, "
-                        "then refresh."
+                        "Review files are missing, incomplete, or unsafe. Use Recovery "
+                        "help on Daily status, then refresh."
                     )
                     return
                 _show_review_prompt_in_finder(pack_dir / PROMPT_NAME)
             except Exception as error:
-                self._set_action_status(
-                    f"Show in Finder failed ({type(error).__name__})."
-                )
+                self._set_action_status(safe_error_message(error))
                 return
             self._set_action_status(
                 "Finder selected REVIEW_PROMPT.md. Review and redact private text "
                 "before sharing."
             )
 
+        def showResultsAction_(self, _sender):
+            if self.busy:
+                return
+            try:
+                path = self.model.saved_results()
+                if path is None:
+                    raise OperatorError("missing_file")
+                _show_review_prompt_in_finder(path)
+            except Exception as error:
+                self._set_action_status(safe_error_message(error))
+                return
+            self._set_action_status("Finder selected your private saved results.")
+
+        def recoveryAction_(self, _sender):
+            path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "docs" / "V2_RECOVERY.md"
+            try:
+                if not path.is_file() or not NSWorkspace.sharedWorkspace().openURL_(NSURL.fileURLWithPath_(str(path))):
+                    raise OperatorError("missing_file")
+            except Exception as error:
+                self._set_action_status(safe_error_message(error))
+                return
+            self._set_action_status("Opened the local recovery guide.")
+
         def pauseAction_(self, _sender):
             if self.busy:
                 return
-            pause = self.pause_button.title() != "Turn off manual pause"
+            pause = self.last_snapshot is None or self.last_snapshot.manual_paused is not True
             end = self._selected_date()
             days = self._selected_days()
             self._set_busy(True)
@@ -1183,6 +1318,7 @@ if APPKIT_AVAILABLE:
                     if pause
                     else "Manual privacy pause is off.",
                     self.pause_button,
+                    (end, days),
                 )
 
             threading.Thread(
@@ -1198,12 +1334,16 @@ if APPKIT_AVAILABLE:
             if outcome is None:
                 self._set_action_status("Choose a result first.")
                 return
+            if not self._text_within_limit():
+                self._set_action_status(safe_error_message(OperatorError("text_too_long")))
+                return
+            if week >= datetime.now().astimezone().date():
+                self._set_action_status("The selected end date must be a completed day. Your draft is kept.")
+                return
             try:
                 prepared_pack = self.model.prepared_pack(week, days)
             except Exception as error:
-                self._set_action_status(
-                    f"Review file check failed ({type(error).__name__})."
-                )
+                self._set_action_status(safe_error_message(error))
                 return
             if prepared_pack is None:
                 self._set_action_status(
@@ -1219,6 +1359,7 @@ if APPKIT_AVAILABLE:
                 try:
                     self.model.record_outcome(
                         week,
+                        days,
                         outcome,
                         value_result,
                         notes,
@@ -1244,7 +1385,7 @@ if APPKIT_AVAILABLE:
             self._layout_scroll_content()
             if self.initial_scroll_pending:
                 self._scroll_to_visual_top()
-            self._start_refresh("Review Center opened.", focus=self.end_picker)
+            self._start_refresh("Review Center opened.", focus=self.pause_button)
 
         def windowShouldClose_(self, _sender):
             self.window.orderOut_(None)

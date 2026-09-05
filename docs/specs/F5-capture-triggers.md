@@ -1,6 +1,6 @@
 # F5 capture triggers and ordered click sections
 
-**Status:** current trigger contract for ActivityLogger 4.5.1. Current acceptance evidence is in [`IMPL-STATUS.md`](IMPL-STATUS.md).
+**Status:** current trigger contract for ActivityLogger 4.6.0. Current acceptance evidence is in [`IMPL-STATUS.md`](IMPL-STATUS.md).
 
 ## Trigger annotations
 

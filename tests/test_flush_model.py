@@ -298,7 +298,7 @@ def test_T_F3_19_file_writer_uses_flush_interval_sec():
     with patch.object(il._writer_wakeup, "wait", side_effect=_wait):
         with pytest.raises(StopIteration):
             il.file_writer_loop()
-    assert waited[0] == 5
+    assert waited[0] == pytest.approx(5, abs=0.01)
 
 
 # --- F5 reason / trigger contract ---

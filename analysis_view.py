@@ -11,8 +11,8 @@ import stat
 import sys
 import tempfile
 from collections import Counter
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -21,20 +21,25 @@ from analysis_log import (
     ANALYSIS_FORMAT_V2,
     TIMELINE_ROW_DECLARATION,
     AnalysisRecord,
+    WORKLOAD_KINDS,
     _ensure_private_dir,
     _intents_match_records,
     _json_string,
     _records_digest,
     _safe_json,
     analysis_paths,
+    analysis_quality,
     analysis_format_for_day,
     intent_path,
+    heartbeat_summary,
     parse_records,
     ready_path,
     read_intents,
     render_records_v2,
     validate_day_ready,
 )
+from operator_errors import OperatorError
+from private_files import read_private_bytes
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
@@ -68,9 +73,6 @@ USER_PRIVATE_OUTPUT_DIR = user_private_output_dir()
 COMPACT_FORMAT = "activitylogger-analysis-view-v1"
 WORKLOAD_FORMAT = "activitylogger-workload-summary-v3-pilot"
 WORKLOAD_GAP_SECONDS = 10 * 60
-WORKLOAD_KINDS = frozenset(
-    {"type", "click", "clipboard", "screen", "url", "scroll", "event"}
-)
 EXACT_WORKLOAD_KINDS = WORKLOAD_KINDS - {"click"}
 MARKER_KINDS = frozenset(
     {
@@ -161,6 +163,7 @@ class WorkloadViewMetrics:
     heartbeat_first: str | None
     heartbeat_last: str | None
     max_heartbeat_gap_seconds: int
+    quality: dict[str, object] = field(default_factory=dict)
 
 
 def _validate_provenance(name: str, digest: str) -> None:
@@ -170,36 +173,7 @@ def _validate_provenance(name: str, digest: str) -> None:
 
 def _stable_read(path: Path) -> bytes:
     """Read one owner-only regular file and reject concurrent replacement."""
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags)
-    try:
-        before = os.fstat(fd)
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or before.st_uid != os.getuid()
-            or before.st_mode & 0o077
-        ):
-            raise OSError("refusing unsafe compact-view source")
-        chunks: list[bytes] = []
-        while chunk := os.read(fd, 1024 * 1024):
-            chunks.append(chunk)
-        after = os.fstat(fd)
-        if (
-            before.st_ino,
-            before.st_size,
-            before.st_mtime_ns,
-            before.st_ctime_ns,
-        ) != (
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-            after.st_ctime_ns,
-        ):
-            raise OSError("compact-view source changed during read")
-        return b"".join(chunks)
-    finally:
-        os.close(fd)
+    return read_private_bytes(path)
 
 
 def _render_compact_body(
@@ -417,12 +391,12 @@ def export_compact_day(
     """Export one completed, intent-verified analysis day to a private compact view."""
     cutoff = today or datetime.now().astimezone().date()
     if day >= cutoff:
-        raise ValueError("compact view requires a completed calendar day")
+        raise OperatorError("day_not_completed")
     output_root = _prepare_output_dir(log_dir, output_dir)
     analysis_file, invalid_file = analysis_paths(log_dir, day)
     intent_file = intent_path(log_dir, day)
-    if invalid_file.exists():
-        raise ValueError("analysis day has an invalid marker")
+    if invalid_file.exists() or invalid_file.is_symlink():
+        raise OperatorError("day_unverified")
 
     analysis_bytes = _stable_read(analysis_file)
     intent_bytes = _stable_read(intent_file)
@@ -435,14 +409,12 @@ def export_compact_day(
             expected_format=analysis_format_for_day(day),
         )
         intents = read_intents(intent_file)
-    except (KeyError, OSError, UnicodeError, ValueError, TypeError) as exc:
-        raise ValueError(
-            f"invalid compact-view source [{type(exc).__name__}]"
-        ) from None
+    except (KeyError, OSError, UnicodeError, ValueError, TypeError, RecursionError):
+        raise OperatorError("day_unverified") from None
     if not _intents_match_records(intents, records):
-        raise ValueError("analysis does not match its complete intent stream")
+        raise OperatorError("day_unverified")
     if _stable_read(intent_file) != intent_bytes:
-        raise OSError("compact-view intent changed during validation")
+        raise OperatorError("source_changed")
 
     text = render_compact_view(
         records,
@@ -460,7 +432,7 @@ def export_compact_day(
             or info.st_uid != os.getuid()
             or info.st_mode & 0o077
         ):
-            raise OSError("refusing unsafe compact-view destination")
+            raise OperatorError("unsafe_file")
     staged = _stage_private_text(output_root, output.name, text)
     try:
         output_bytes = _stable_read(staged)
@@ -469,9 +441,9 @@ def export_compact_day(
         if (
             hashlib.sha256(_stable_read(analysis_file)).hexdigest() != analysis_digest
             or hashlib.sha256(_stable_read(intent_file)).hexdigest() != intent_digest
-            or invalid_file.exists()
+            or invalid_file.exists() or invalid_file.is_symlink()
         ):
-            raise OSError("compact-view source changed before commit verification")
+            raise OperatorError("source_changed")
         os.replace(staged, output)
         _fsync_directory(output_root)
     finally:
@@ -623,38 +595,7 @@ def _marker_payload_groups(
 def _heartbeat_summary(
     records: Sequence[AnalysisRecord],
 ) -> dict[str, int | str | None]:
-    heartbeats = sorted(
-        record.captured_at for record in records if record.kind == "heartbeat"
-    )
-    gaps = [
-        int((current - previous).total_seconds())
-        for previous, current in zip(heartbeats, heartbeats[1:])
-        if current >= previous
-    ]
-    if heartbeats:
-        day = records[0].section_captured_at.date()
-        day_start = datetime.combine(
-            day,
-            datetime.min.time(),
-            tzinfo=heartbeats[0].tzinfo,
-        )
-        day_end = datetime.combine(
-            day + timedelta(days=1),
-            datetime.min.time(),
-            tzinfo=heartbeats[-1].tzinfo,
-        )
-        gaps.extend(
-            (
-                max(0, int((heartbeats[0] - day_start).total_seconds())),
-                max(0, int((day_end - heartbeats[-1]).total_seconds())),
-            )
-        )
-    return {
-        "count": len(heartbeats),
-        "first": _stamp(heartbeats[0]) if heartbeats else None,
-        "last": _stamp(heartbeats[-1]) if heartbeats else None,
-        "max_gap_seconds": max(gaps, default=0),
-    }
+    return heartbeat_summary(records)
 
 
 def _focus_buckets(
@@ -801,7 +742,8 @@ def _render_workload_summary(
         context["exact_evidence"] = int(context["exact_evidence"]) + sum(
             record.kind in EXACT_WORKLOAD_KINDS for _ordinal, record in span
         )
-        context["last"] = span[-1][1].captured_at
+        context["first"] = min(context["first"], span[0][1].captured_at)
+        context["last"] = max(context["last"], span[-1][1].captured_at)
 
     focus_records = tuple(record for record in records if record.kind == "focus")
     focus_buckets = _focus_buckets(records)
@@ -992,14 +934,16 @@ def export_workload_day(
 ) -> WorkloadViewMetrics:
     """Export one completed canonical v2 day to a private lossy workload view."""
     cutoff = today or datetime.now().astimezone().date()
-    if day < ANALYSIS_ONLY_START_DAY or day >= cutoff:
-        raise ValueError("workload summary requires a completed canonical v2 day")
+    if day >= cutoff:
+        raise OperatorError("day_not_completed")
+    if day < ANALYSIS_ONLY_START_DAY:
+        raise OperatorError("unsupported_format")
     output_root = _prepare_output_dir(log_dir, output_dir)
     analysis_file, invalid_file = analysis_paths(log_dir, day)
     intent_file = intent_path(log_dir, day)
     proof_file = ready_path(log_dir, day)
-    if invalid_file.exists() or not validate_day_ready(log_dir, day):
-        raise ValueError("workload-summary source is not ready")
+    if invalid_file.exists() or invalid_file.is_symlink() or not validate_day_ready(log_dir, day):
+        raise OperatorError("incomplete_window")
 
     analysis_bytes = _stable_read(analysis_file)
     intent_bytes = _stable_read(intent_file)
@@ -1015,12 +959,10 @@ def export_workload_day(
             expected_format=ANALYSIS_FORMAT_V2,
         )
         intents = read_intents(intent_file)
-    except (KeyError, OSError, UnicodeError, ValueError, TypeError) as exc:
-        raise ValueError(
-            f"invalid workload-summary source [{type(exc).__name__}]"
-        ) from None
+    except (KeyError, OSError, UnicodeError, ValueError, TypeError, RecursionError):
+        raise OperatorError("day_unverified") from None
     if not _intents_match_records(intents, records):
-        raise ValueError("workload-summary source does not match its intent stream")
+        raise OperatorError("day_unverified")
 
     text, metrics = _render_workload_summary(
         records,
@@ -1040,20 +982,20 @@ def export_workload_day(
             or info.st_uid != os.getuid()
             or info.st_mode & 0o077
         ):
-            raise OSError("refusing unsafe workload-summary destination")
+            raise OperatorError("unsafe_file")
     staged = _stage_private_text(output_root, output.name, text)
     try:
         output_bytes = _stable_read(staged)
         if output_bytes != text.encode("utf-8"):
             raise ValueError("staged workload summary differs from its projection")
         if not validate_day_ready(log_dir, day):
-            raise OSError("workload-summary source changed before commit verification")
+            raise OperatorError("source_changed")
         current = tuple(
             hashlib.sha256(_stable_read(path)).hexdigest()
             for path in (analysis_file, intent_file, proof_file)
         )
-        if current != digests or invalid_file.exists():
-            raise OSError("workload-summary source changed before commit verification")
+        if current != digests or invalid_file.exists() or invalid_file.is_symlink():
+            raise OperatorError("source_changed")
         os.replace(staged, output)
         _fsync_directory(output_root)
     finally:
@@ -1088,4 +1030,5 @@ def export_workload_day(
         heartbeat_first=heartbeat["first"],
         heartbeat_last=heartbeat["last"],
         max_heartbeat_gap_seconds=int(heartbeat["max_gap_seconds"]),
+        quality=analysis_quality(records, source_bytes=len(analysis_bytes)),
     )

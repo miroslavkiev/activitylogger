@@ -15,14 +15,12 @@ sys.path.insert(0, str(REPO))
 from analysis_log import (  # noqa: E402
     ANALYSIS_FORMAT_V1,
     ANALYSIS_FORMAT_V2,
-    _intents_match_records,
     analysis_paths,
-    analysis_format_for_day,
-    intent_path,
-    parse_records,
-    read_intents,
+    inspect_analysis_day,
 )
 from config import load_config  # noqa: E402
+from operator_errors import OperatorError, safe_error_message  # noqa: E402
+from private_files import read_private_bytes  # noqa: E402
 
 
 KNOWN_FORMATS = frozenset(
@@ -43,6 +41,7 @@ class DayIntegrity:
     session_stops: int
     privacy_starts: int
     privacy_ends: int
+    integrity_ok: bool = True
 
     @property
     def ok(self) -> bool:
@@ -51,6 +50,7 @@ class DayIntegrity:
             and self.intent_match
             and not self.invalid_marker
             and self.stable_snapshot
+            and self.integrity_ok
         )
 
 
@@ -67,34 +67,10 @@ def _format_name(text: str) -> str:
 
 
 def check_day(log_dir: Path, day: date) -> DayIntegrity:
-    analysis_file, invalid_file = analysis_paths(log_dir, day)
-    intent_file = intent_path(log_dir, day)
-    analysis_bytes = analysis_file.read_bytes()
-    intent_bytes = intent_file.read_bytes()
-    text = analysis_bytes.decode("utf-8")
-    format_name = _format_name(text)
-    expected_format = analysis_format_for_day(day)
-    if format_name != expected_format:
-        raise ValueError("analysis format does not match its configured day")
-    records = parse_records(text, day=day, expected_format=expected_format)
-    intents = read_intents(intent_file)
-    stable = (
-        analysis_file.read_bytes() == analysis_bytes
-        and intent_file.read_bytes() == intent_bytes
-    )
-    return DayIntegrity(
-        format_name=format_name,
-        strict_parse=True,
-        intent_match=_intents_match_records(intents, records),
-        invalid_marker=invalid_file.exists(),
-        stable_snapshot=stable,
-        events=len(records),
-        heartbeats=sum(record.kind == "heartbeat" for record in records),
-        session_starts=sum(record.kind == "session_start" for record in records),
-        session_stops=sum(record.kind == "session_stop" for record in records),
-        privacy_starts=sum(record.kind == "privacy_pause_start" for record in records),
-        privacy_ends=sum(record.kind == "privacy_pause_end" for record in records),
-    )
+    inspection = inspect_analysis_day(log_dir, day)
+    return DayIntegrity(**{
+        field: getattr(inspection, field) for field in DayIntegrity.__dataclass_fields__
+    })
 
 
 def _print_result(day: date, result: DayIntegrity) -> None:
@@ -116,10 +92,10 @@ def _print_result(day: date, result: DayIntegrity) -> None:
 def _failure_metadata(log_dir: Path, day: date) -> tuple[str, bool]:
     analysis_file, invalid_file = analysis_paths(log_dir, day)
     try:
-        format_name = _format_name(analysis_file.read_text(encoding="utf-8"))
+        format_name = _format_name(read_private_bytes(analysis_file).decode("utf-8"))
     except (OSError, UnicodeError, ValueError):
         format_name = "unknown"
-    return format_name, invalid_file.exists()
+    return format_name, invalid_file.exists() or invalid_file.is_symlink()
 
 
 def main() -> int:
@@ -131,12 +107,16 @@ def main() -> int:
         type=date.fromisoformat,
         default=datetime.now().astimezone().date(),
     )
-    parser.add_argument("--log-dir", type=Path, default=load_config().log_dir)
+    parser.add_argument("--log-dir", type=Path, default=None)
     args = parser.parse_args()
+    log_dir = args.log_dir
     try:
-        result = check_day(args.log_dir, args.day)
+        log_dir = log_dir or load_config().log_dir
+        result = check_day(log_dir, args.day)
     except Exception as exc:
-        format_name, invalid_marker = _failure_metadata(args.log_dir, args.day)
+        format_name, invalid_marker = (
+            _failure_metadata(log_dir, args.day) if log_dir else ("unknown", False)
+        )
         print(f"day={args.day.isoformat()}")
         print(f"format={format_name}")
         print("strict_parse=false")
@@ -150,9 +130,11 @@ def main() -> int:
         print("privacy_starts=0")
         print("privacy_ends=0")
         print("ok=false")
-        print(f"error=analysis check failed [{type(exc).__name__}]", file=sys.stderr)
+        print(f"error={safe_error_message(exc)}", file=sys.stderr)
         return 1
     _print_result(args.day, result)
+    if not result.ok:
+        print(f"error={safe_error_message(OperatorError('day_unverified'))}", file=sys.stderr)
     return 0 if result.ok else 1
 
 

@@ -26,7 +26,6 @@ from analysis_log import (
     ANALYSIS_ONLY_START_DAY,
     CapturedEvent,
     SectionSnapshot,
-    authoritative_day_present,
     authoritative_transaction_pending,
     commit_authoritative_transaction,
     commit_trial_batch,
@@ -38,7 +37,6 @@ from analysis_log import (
     recover_authoritative_transaction,
     snapshot_sections,
     validate_authoritative_day,
-    validate_day_ready,
 )
 
 try:
@@ -109,7 +107,7 @@ from window_titles import (
     merge_native_and_aw,
 )
 
-__version__ = "4.5.1"
+__version__ = "4.6.0"
 ANALYSIS_SHADOW_ENABLED = True
 
 # Config mirrors - seeded from AppConfig defaults (single literal source: config.default_config).
@@ -208,6 +206,7 @@ _lock = threading.RLock()
 _flush_lock = threading.Lock()
 _io_lock = threading.Lock()
 _current_heading = ""
+_heading_native_context: tuple[int, str, str] | None = None
 # Same list objects as LoggerState (tests mutate il._current_* / il._sections).
 _current_keystrokes = _state.current_keystrokes
 _current_events = _state.current_events
@@ -229,6 +228,8 @@ _privacy_generation = 0
 _manual_control_revision = 0
 _manual_control_pending: bool | None = None
 _manual_state_dirty = threading.Event()
+_manual_state_retry_at = 0.0
+_manual_state_retry_delay = 0.0
 _current_modifiers: set[str] = set()
 _physical_modifiers: set[object] = set()
 _modifier_counts: dict[str, int] = {}
@@ -243,7 +244,7 @@ _secure_field_cache_at = 0.0
 _secure_field_cache_known = False
 _secure_field_generation = 0
 _secure_field_lock = threading.RLock()
-_secure_app_lock = threading.Lock()
+_secure_app_lock = threading.RLock()
 
 _window_bucket: str | None = None
 _ax_jobs: queue.Queue = queue.Queue(maxsize=AX_QUEUE_MAXSIZE)
@@ -257,6 +258,13 @@ _scroll_deadline_changed = threading.Event()
 _writer_wakeup = threading.Event()
 _fatal_worker_event = threading.Event()
 _flush_failed = False
+_storage_blocked = False
+_storage_gap_started_at: datetime | None = None
+_pending_storage_gap: tuple[datetime, datetime] | None = None
+_file_flush_deadline: float | None = None
+_file_retry_delay = 0.0
+_readiness_reconciled_day: date | None = None
+_readiness_candidates: set[date] = set()
 _click_sequence = itertools.count(1)
 _analysis_sequence = itertools.count(1)
 _pending_clicks: dict[int, dict] = {}
@@ -379,7 +387,7 @@ def _recompute_paused_locked() -> None:
 
 def is_paused() -> bool:
     with _lock:
-        return _is_paused
+        return _is_paused or _storage_blocked
 
 
 def _set_pause(
@@ -715,6 +723,7 @@ def _frontmost_context_for_window_test_compat(
 def apply_resolved_window(app: str, title: str) -> bool:
     """Apply a window only while its verified privacy context is still current."""
     global _pause_secure_app, _pause_secure_field, _window_apply_generation
+    global _heading_native_context
 
     if _stop_event.is_set():
         return False
@@ -763,15 +772,17 @@ def apply_resolved_window(app: str, title: str) -> bool:
                 if _stop_event.is_set() or apply_generation != _window_apply_generation:
                     return False
                 heading_changed = new_heading != _current_heading
-                _pause_secure_app = is_secure_app
-                _pause_secure_field = is_secure_field
-                _recompute_paused_locked()
-                _apply_heading_change_locked(new_heading)
+                _set_pause(app=is_secure_app, field=is_secure_field)
+                if not _storage_blocked:
+                    _apply_heading_change_locked(new_heading)
+                    _heading_native_context = (
+                        context_after if not is_secure_app and not is_secure_field else None
+                    )
                 need_flush = _buffers_need_file_flush_locked()
 
     # Skip AX scan enqueue when heading unchanged (debounce still applies if enqueued).
     if heading_changed and not _stop_event.is_set() and not is_paused():
-        _enqueue_ax(("scan",))
+        _enqueue_ax(("scan", context_after))
     if need_flush:
         flush_to_file()
     return True
@@ -893,7 +904,7 @@ def _append_analysis_marker_locked(
     heading_override: str | None = None,
 ) -> None:
     """Add one shadow-only timeline marker. Caller holds `_lock`."""
-    if not _analysis_runtime_enabled:
+    if not _analysis_runtime_enabled or _storage_blocked:
         return
     stamp = captured_at or datetime.now().astimezone()
     heading = heading_override or (
@@ -981,6 +992,7 @@ def maybe_record_analysis_heartbeat(
 def _apply_heading_change_locked(new_heading: str) -> None:
     """Flush keys, seal events, set heading. Caller holds `_lock`."""
     global _current_heading, _last_screen_text, _last_key_activity_mono
+    global _heading_native_context
     if new_heading == _current_heading:
         return
     # F6: flush open scroll into prior section before heading switch.
@@ -988,6 +1000,7 @@ def _apply_heading_change_locked(new_heading: str) -> None:
     _flush_keys(cause="app_switch")
     _seal_open_events_locked("app_switch")
     _current_heading = new_heading
+    _heading_native_context = None
     _append_analysis_marker_locked("focus")
     _last_screen_text = ""
     _last_key_activity_mono = None
@@ -1007,7 +1020,7 @@ def apply_heading_change(new_heading: str) -> None:
 
 
 def _add_event_locked(ev: str, seal_trigger: str | None = None) -> bool:
-    if _stop_event.is_set() or _is_paused:
+    if _stop_event.is_set() or _is_paused or _storage_blocked:
         return False
     cause = seal_trigger or "add_event"
     _flush_keys(cause=cause)
@@ -1073,7 +1086,7 @@ def on_scroll_tick(
     if _stop_event.is_set() or not SCROLL_COALESCE_ENABLED:
         return
     with _lock:
-        if _is_paused:
+        if _is_paused or _storage_blocked:
             return
         t = time.monotonic() if now is None else now
         app_name = app
@@ -1093,15 +1106,15 @@ def on_scroll_tick(
 
 def on_scroll(x, y, dx, dy) -> None:
     """pynput scroll callback, with no AX scan or screenshot."""
-    if not SCROLL_COALESCE_ENABLED or is_paused():
+    if not SCROLL_COALESCE_ENABLED:
         return
-    heading = ""
-    app = ""
+    context = _capture_context()
+    if context is None:
+        return
     with _lock:
-        heading = _current_heading
-        if heading:
-            app = heading.split(" \N{EM DASH} ", 1)[0].strip()
-    on_scroll_tick(dx=dx, dy=dy, app=app, heading=heading)
+        if not _capture_context_matches_locked(context):
+            return
+        on_scroll_tick(dx=dx, dy=dy, app=context[1], heading=_current_heading)
 
 
 def on_mouse_move_stub(x, y) -> None:
@@ -1252,6 +1265,9 @@ def maybe_capture_browser_url(app: str, *, url_provider=None) -> None:
         return
     if not is_browser_app(app):
         return
+    context = _capture_context()
+    if context is None or (context[0] != 0 and context[1].casefold() != app.casefold()):
+        return
     with _lock:
         if _is_paused:
             return
@@ -1267,7 +1283,13 @@ def maybe_capture_browser_url(app: str, *, url_provider=None) -> None:
     except Exception as e:
         _diag_rate_limited(f"browser url error [{_exception_category(e)}]")
         return
-    record_browser_url_observation(raw, privacy_generation=privacy_generation)
+    final_context = _capture_context(context)
+    record_browser_url_observation(
+        raw,
+        privacy_generation=privacy_generation,
+        allow_capture=final_context is not None,
+        context=context,
+    )
 
 
 def _coerce_url_provider(url_provider):
@@ -1301,7 +1323,11 @@ def process_window_check_cycle(
 
 
 def record_browser_url_observation(
-    url: str, *, privacy_generation: int | None = None
+    url: str,
+    *,
+    privacy_generation: int | None = None,
+    allow_capture: bool = True,
+    context: tuple[int, str, str] | None = None,
 ) -> None:
     """Test/helper: emit a URL observation through the same path as live capture."""
     global _last_emitted_url
@@ -1315,9 +1341,11 @@ def record_browser_url_observation(
             privacy_generation is not None
             and privacy_generation != _privacy_generation
         )
+        if context is not None and not _capture_context_matches_locked(context):
+            allow_capture = False
         new_last, event = apply_url_observation(
             enabled=True,
-            paused=_is_paused or spanned_pause,
+            paused=_is_paused or _storage_blocked or spanned_pause or not allow_capture,
             candidate=url,
             last_emitted=_last_emitted_url or None,
         )
@@ -1414,6 +1442,65 @@ def _secure_field_is_safe_for_key() -> bool:
     return True
 
 
+def _capture_context(
+    expected: tuple[int, str, str] | None = None,
+    *,
+    allow_storage_blocked: bool = False,
+) -> tuple[int, str, str] | None:
+    """Verify one native context and bind its heading before accepting capture."""
+    global _heading_native_context
+    with _lock:
+        if (
+            _stop_event.is_set()
+            or _pause_manual
+            or _pause_review_center
+            or (_storage_blocked and not allow_storage_blocked)
+        ):
+            return None
+    with _secure_app_lock:
+        context = _maybe_pause_secure_app_on_key()
+        if context is None or not _secure_field_is_safe_for_key():
+            return None
+        final_context = _maybe_pause_secure_app_on_key()
+        if context != final_context or (expected is not None and context != expected):
+            return None
+        with _lock:
+            if (
+                _stop_event.is_set()
+                or _is_paused
+                or (_storage_blocked and not allow_storage_blocked)
+            ):
+                return None
+            # PID zero is the existing isolated-test context, never a native PID.
+            if context[0] != 0 and not _storage_blocked:
+                if context != _heading_native_context or context[2]:
+                    heading = build_heading_body(context[1], context[2])
+                    if heading is None:
+                        return None
+                    _apply_heading_change_locked(heading)
+                _heading_native_context = context
+        return context
+
+
+def _capture_context_matches_locked(context: tuple[int, str, str]) -> bool:
+    """Reject an admission superseded by another callback before its append."""
+    return (
+        not _stop_event.is_set()
+        and not _is_paused
+        and not _storage_blocked
+        and (
+            context[0] == 0
+            or (
+                context == _heading_native_context
+                and (
+                    not context[2]
+                    or _current_heading == build_heading_body(context[1], context[2])
+                )
+            )
+        )
+    )
+
+
 def _press_modifier_locked(key, logical: str) -> None:
     if key in _physical_modifiers:
         if _modifier_counts.get(logical, 0) > 0:
@@ -1440,13 +1527,14 @@ def on_press(key) -> None:
     """Keyboard path with synchronous, fail-closed privacy validation."""
     if _stop_event.is_set():
         return
-    if _maybe_pause_secure_app_on_key() is None or not _secure_field_is_safe_for_key():
+    context = _capture_context()
+    if context is None:
         return
 
     need_flush = False
     with _lock:
         _apply_cached_secure_field_pause_locked()
-        if _is_paused:
+        if not _capture_context_matches_locked(context):
             return
         mutated = False
         if isinstance(key, keyboard.Key):
@@ -1542,18 +1630,24 @@ def extract_text(element, depth=0) -> str:
     return " ".join(extracted)[:char_limit]
 
 
-def scan_screen() -> None:
+def scan_screen(expected_context: tuple[int, str, str] | None = None) -> None:
     if _stop_event.is_set() or not AX_AVAILABLE:
+        return
+    context = _capture_context(expected_context)
+    if context is None:
         return
     with _lock:
         if _is_paused:
             return
         privacy_generation = _privacy_generation
     try:
-        front_app = NSWorkspace.sharedWorkspace().frontmostApplication()
-        if not front_app:
-            return
-        app_elem = AXUIElementCreateApplication(front_app.processIdentifier())
+        pid = context[0]
+        if pid == 0:
+            front_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            if not front_app:
+                return
+            pid = front_app.processIdentifier()
+        app_elem = AXUIElementCreateApplication(pid)
         err, window = AXUIElementCopyAttributeValue(app_elem, "AXFocusedWindow", None)
         if err != 0 or not window:
             return
@@ -1561,6 +1655,8 @@ def scan_screen() -> None:
         text = extract_text(window)
         text = " ".join(text.split())
         if not text:
+            return
+        if _capture_context(context) is None:
             return
 
         global _last_screen_text
@@ -1578,7 +1674,7 @@ def scan_screen() -> None:
             with _lock:
                 if (
                     _stop_event.is_set()
-                    or _is_paused
+                    or not _capture_context_matches_locked(context)
                     or privacy_generation != _privacy_generation
                 ):
                     return
@@ -1663,7 +1759,7 @@ def _resolve_pending_click(
 
 def _reserve_pending_click(context: tuple[int, str, str]) -> int | None:
     with _lock:
-        if _stop_event.is_set() or _is_paused:
+        if not _capture_context_matches_locked(context):
             return None
         _flush_keys(cause="click")
         _seal_open_events_locked("click")
@@ -1688,12 +1784,15 @@ def _reserve_pending_click(context: tuple[int, str, str]) -> int | None:
 
 
 def _process_click(x, y, pending_id: int | None = None) -> None:
-    if _stop_event.is_set() or not AX_AVAILABLE or is_paused():
+    if _stop_event.is_set() or not AX_AVAILABLE or _is_paused:
         if pending_id is not None:
             _discard_pending_click(pending_id)
         return
     try:
-        context = _maybe_pause_secure_app_on_key()
+        with _lock:
+            reservation = _pending_clicks.get(pending_id)
+            expected = reservation.get("click_context") if reservation else None
+        context = _capture_context(expected, allow_storage_blocked=reservation is not None)
         if context is None:
             if pending_id is not None:
                 _discard_pending_click(pending_id)
@@ -1728,7 +1827,7 @@ def _process_click(x, y, pending_id: int | None = None) -> None:
         with _secure_field_lock:
             _mark_secure_field_cache(False)
             _set_pause(field=False)
-        if is_paused():
+        if _is_paused:
             if pending_id is not None:
                 _discard_pending_click(pending_id)
             return
@@ -1743,10 +1842,9 @@ def _process_click(x, y, pending_id: int | None = None) -> None:
 
         role_clean = str(role).replace("AX", "")
         desc = f"{role_clean} '{name}'" if name else role_clean
-        final_context = _maybe_pause_secure_app_on_key()
+        final_context = _capture_context(context, allow_storage_blocked=reservation is not None)
         if (
             final_context is None
-            or not _secure_field_is_safe_for_key()
             or _stop_event.is_set()
         ):
             if pending_id is not None:
@@ -1757,7 +1855,7 @@ def _process_click(x, y, pending_id: int | None = None) -> None:
         else:
             _resolve_pending_click(pending_id, desc, final_context)
         if not _stop_event.is_set() and not is_paused():
-            _enqueue_ax(("scan",))
+            _enqueue_ax(("scan", final_context))
     except Exception as e:
         if pending_id is not None:
             _discard_pending_click(pending_id)
@@ -1811,7 +1909,10 @@ def _ax_worker_loop() -> None:
                 with _ax_meta_lock:
                     _scan_pending = False
                 _state.last_ax_scan_mono = time.monotonic()
-                scan_screen()
+                if len(job) > 1:
+                    scan_screen(job[1])
+                else:
+                    scan_screen()
             elif job[0] == "click":
                 _process_click(job[1], job[2], job[3] if len(job) > 3 else None)
         except Exception as e:
@@ -1823,8 +1924,8 @@ def _ax_worker_loop() -> None:
 def on_click(x, y, button, pressed) -> None:
     if _stop_event.is_set() or not pressed:
         return
-    context = _maybe_pause_secure_app_on_key()
-    if context is None or not _secure_field_is_safe_for_key():
+    context = _capture_context()
+    if context is None:
         return
     pending_id = _reserve_pending_click(context)
     try:
@@ -1929,7 +2030,9 @@ def clipboard_checker_loop() -> None:
                 spanned_pause = (
                     _last_clipboard_privacy_generation != privacy_generation
                 )
+            context = _capture_context()
             text = pb.stringForType_(NSStringPboardType) or ""
+            final_context = _capture_context(context) if context is not None else None
             need_flush = False
             with _lock:
                 if _stop_event.is_set():
@@ -1938,7 +2041,12 @@ def clipboard_checker_loop() -> None:
                 new_count, new_digest, event = _apply_clipboard_change_digest(
                     count,
                     text,
-                    paused_before_read or _is_paused or spanned_pause,
+                    paused_before_read
+                    or _is_paused
+                    or _storage_blocked
+                    or spanned_pause
+                    or final_context is None
+                    or not _capture_context_matches_locked(final_context),
                     _last_clipboard_count,
                     _last_clipboard_digest,
                 )
@@ -2200,10 +2308,41 @@ def _write_analysis_group(
         _diag_rate_limited(f"analysis shadow write failed [{_exception_category(e)}]")
 
 
+def _reconcile_completed_days(healthy_day: date, candidates: set[date]) -> None:
+    """Close existing valid past days after a later healthy local session."""
+    global _readiness_reconciled_day
+    from analysis_log import completed_analysis_days, inspect_analysis_day
+
+    _readiness_candidates.update(candidates)
+    if _readiness_reconciled_day != healthy_day:
+        _readiness_candidates.update(completed_analysis_days(LOG_DIR, before=healthy_day))
+        _readiness_reconciled_day = healthy_day
+    for day in sorted(_readiness_candidates):
+        inspection = inspect_analysis_day(LOG_DIR, day, today=healthy_day)
+        if inspection.integrity_ok and not inspection.invalid_marker and not inspection.ready:
+            publish_day_ready(LOG_DIR, day)
+        _readiness_candidates.discard(day)
+
+
 def flush_to_file() -> bool:
     """Persist resolved sections, with manifest ownership for analysis-only days."""
     global _flush_failed, _scroll_burst
+    global _storage_blocked, _storage_gap_started_at, _pending_storage_gap
+    global _file_flush_deadline, _file_retry_delay
     with _flush_lock:
+        if (
+            _storage_blocked
+            and _file_flush_deadline is not None
+            and time.monotonic() < _file_flush_deadline
+        ):
+            return False
+        with _lock:
+            if _pending_storage_gap is not None and _analysis_runtime_enabled and not _storage_blocked:
+                start, end = _pending_storage_gap
+                _append_analysis_marker_locked(
+                    "heartbeat", f"storage_gap start={start.isoformat()} end={end.isoformat()}"
+                )
+                _pending_storage_gap = None
         detached = False
         authoritative_owned = False
         authoritative_committed = False
@@ -2518,11 +2657,12 @@ def flush_to_file() -> bool:
                     committed = commit_authoritative_transaction(LOG_DIR)
                     _analysis_heading_by_day.update(committed)
                     authoritative_committed = True
-                    for completed_day in sorted(ready_days):
-                        if authoritative_day_present(
-                            LOG_DIR, completed_day
-                        ) and not validate_day_ready(LOG_DIR, completed_day):
-                            publish_day_ready(LOG_DIR, completed_day)
+                    if committed or ready_days:
+                        healthy_day = max(
+                            set(committed)
+                            | {day + timedelta(days=1) for day in ready_days}
+                        )
+                        _reconcile_completed_days(healthy_day, ready_days)
                 except Exception as e:
                     with _lock:
                         pre_ids = {id(section) for section in pre_sections}
@@ -2637,10 +2777,38 @@ def flush_to_file() -> bool:
                 + (f"; dropped {dropped} oldest buffered sections" if dropped else "")
             )
             return False
+        finally:
+            with _lock:
+                if _flush_failed:
+                    _file_retry_delay = min(
+                        60.0, max(1.0, (_file_retry_delay or float(FLUSH_INTERVAL_SEC)) * 2.0)
+                    )
+                    if not _fatal_worker_event.is_set() and not _storage_blocked:
+                        _storage_blocked = True
+                        _storage_gap_started_at = datetime.now().astimezone()
+                        _manual_state_dirty.set()
+                else:
+                    _file_retry_delay = 0.0
+                    if _storage_blocked and not (
+                        _current_keystrokes or _current_events or _sections or _analysis_markers
+                    ):
+                        _storage_blocked = False
+                        if _storage_gap_started_at is not None:
+                            _pending_storage_gap = (
+                                _storage_gap_started_at, datetime.now().astimezone()
+                            )
+                        _storage_gap_started_at = None
+                        _manual_state_dirty.set()
+                _file_flush_deadline = time.monotonic() + (
+                    _file_retry_delay or float(FLUSH_INTERVAL_SEC)
+                )
+            _writer_wakeup.set()
 
 
 def file_writer_loop() -> None:
-    delay = float(FLUSH_INTERVAL_SEC)
+    global _file_flush_deadline
+    if _file_flush_deadline is None:
+        _file_flush_deadline = time.monotonic() + float(FLUSH_INTERVAL_SEC)
     while not _stop_event.is_set():
         _writer_wakeup.clear()
         if _stop_event.is_set():
@@ -2651,20 +2819,15 @@ def file_writer_loop() -> None:
                 for section in _pending_clicks.values()
                 if isinstance(section.get("expires_mono"), (int, float))
             ]
-        timeout = delay
+        timeout = max(0.0, _file_flush_deadline - time.monotonic())
         if expiries:
             timeout = min(timeout, max(0.0, min(expiries) - time.monotonic()))
-        signaled = _writer_wakeup.wait(timeout)
+        _writer_wakeup.wait(timeout)
         if _stop_event.is_set():
             return
-        if signaled:
-            continue
-        _expire_pending_clicks()
-        delay = (
-            float(FLUSH_INTERVAL_SEC)
-            if flush_to_file()
-            else min(60.0, max(1.0, delay * 2.0))
-        )
+        expired = _expire_pending_clicks()
+        if expired or time.monotonic() >= _file_flush_deadline:
+            flush_to_file()
 
 
 def acquire_instance_lock() -> bool:
@@ -2726,9 +2889,12 @@ def _request_stop(signum=None, _frame=None) -> None:
 def _request_manual_control(signum, _frame=None) -> None:
     """Apply manual privacy control through the shared capture gate."""
     global _manual_control_pending, _manual_control_revision
+    global _manual_state_retry_at, _manual_state_retry_delay
     requested = signum == signal.SIGUSR1
     _manual_control_revision += 1
     _manual_control_pending = requested
+    _manual_state_retry_at = 0.0
+    _manual_state_retry_delay = 0.0
     if requested:
         _set_pause(manual=True)
     _manual_state_dirty.set()
@@ -2742,10 +2908,24 @@ def _publish_runtime_state(
     control_revision: int | None = None,
 ) -> bool:
     try:
+        manual = _pause_manual if manual_paused is None else manual_paused
+        reasons = tuple(
+            name
+            for name, active in (
+                ("manual", manual),
+                ("secure_app", _pause_secure_app),
+                ("secure_field", _pause_secure_field),
+                ("review_window", _pause_review_center),
+                ("storage", _storage_blocked),
+            )
+            if active
+        )
         write_runtime_state(
             running=running,
-            manual_paused=_pause_manual if manual_paused is None else manual_paused,
+            manual_paused=manual,
             capture_paused=is_paused() if capture_paused is None else capture_paused,
+            storage_blocked=_storage_blocked,
+            pause_reasons=reasons,
             control_revision=(
                 _manual_control_revision
                 if control_revision is None
@@ -2762,10 +2942,18 @@ def _publish_runtime_state(
 
 def _apply_pending_manual_control() -> None:
     global _manual_control_pending
+    global _manual_state_retry_at, _manual_state_retry_delay
+    if time.monotonic() < _manual_state_retry_at:
+        return
     requested = _manual_control_pending
     _manual_state_dirty.clear()
     if requested is None:
-        if not _publish_runtime_state(running=True):
+        if _publish_runtime_state(running=True):
+            _manual_state_retry_at = 0.0
+            _manual_state_retry_delay = 0.0
+        else:
+            _manual_state_retry_delay = min(30.0, max(1.0, _manual_state_retry_delay * 2.0))
+            _manual_state_retry_at = time.monotonic() + _manual_state_retry_delay
             _manual_state_dirty.set()
         return
     revision = _manual_control_revision
@@ -2782,6 +2970,7 @@ def _apply_pending_manual_control() -> None:
                 _pause_secure_app
                 or _pause_secure_field
                 or _pause_review_center
+                or _storage_blocked
             )
         published = _publish_runtime_state(
             running=True,
@@ -2790,8 +2979,12 @@ def _apply_pending_manual_control() -> None:
             control_revision=revision,
         )
     if not published:
+        _manual_state_retry_delay = min(30.0, max(1.0, _manual_state_retry_delay * 2.0))
+        _manual_state_retry_at = time.monotonic() + _manual_state_retry_delay
         _manual_state_dirty.set()
         return
+    _manual_state_retry_at = 0.0
+    _manual_state_retry_delay = 0.0
     if _manual_control_revision != revision or _manual_control_pending is not requested:
         _manual_state_dirty.set()
         return
@@ -2859,11 +3052,14 @@ def main() -> int:
     global _analysis_runtime_enabled, _shutdown_reason
     global _manual_control_pending, _manual_control_revision, _pause_manual
     global _pause_review_center
+    global _manual_state_retry_at, _manual_state_retry_delay
+    global _file_flush_deadline, _file_retry_delay, _readiness_reconciled_day
     status = 0
     workers: list[threading.Thread] = []
     m_listener = None
     k_listener = None
     review_center_runtime = None
+    acquired_instance_lock = False
     previous_handlers: dict[int, object] = {}
     os.umask(0o077)
     _stop_event.clear()
@@ -2873,6 +3069,12 @@ def main() -> int:
     _manual_control_revision = 0
     _manual_control_pending = None
     _manual_state_dirty.clear()
+    _manual_state_retry_at = 0.0
+    _manual_state_retry_delay = 0.0
+    _file_flush_deadline = None
+    _file_retry_delay = 0.0
+    _readiness_reconciled_day = None
+    _readiness_candidates.clear()
     _fatal_worker_event.clear()
     try:
         for signum in (signal.SIGTERM, signal.SIGINT):
@@ -2902,12 +3104,14 @@ def main() -> int:
         if not acquire_instance_lock():
             _diag("FATAL: another ActivityLogger instance holds the lock, exiting")
             return 1
+        acquired_instance_lock = True
         _pause_manual = initial_manual_pause()
         _set_pause(manual=_pause_manual)
         for signum in (signal.SIGUSR1, signal.SIGUSR2):
             previous_handlers[signum] = signal.getsignal(signum)
             signal.signal(signum, _request_manual_control)
-        _publish_runtime_state(running=True)
+        if not _publish_runtime_state(running=True):
+            _manual_state_dirty.set()
         startup_stamp = datetime.now().astimezone()
         startup_day = startup_stamp.date()
         try:
@@ -3048,18 +3252,22 @@ def main() -> int:
             if worker.is_alive():
                 _diag(f"FATAL: worker did not stop: {worker.name}")
                 status = 1
-        _discard_all_pending_clicks()
-        flush_scroll_burst_on_shutdown()
-        with _lock:
-            reason = _shutdown_reason or "normal"
-            _append_analysis_marker_locked("session_stop", reason)
-        if not flush_to_file():
-            status = 1
-        _analysis_runtime_enabled = False
-        _analysis_idle_active = False
-        _analysis_last_heartbeat_mono = None
-        _publish_runtime_state(running=False)
-        _close_instance_lock()
+        if acquired_instance_lock:
+            _discard_all_pending_clicks()
+            flush_scroll_burst_on_shutdown()
+            with _lock:
+                reason = _shutdown_reason or "normal"
+                _append_analysis_marker_locked("session_stop", reason)
+            _file_flush_deadline = None
+            if not flush_to_file():
+                status = 1
+            elif _pending_storage_gap is not None and not flush_to_file():
+                status = 1
+            _analysis_runtime_enabled = False
+            _analysis_idle_active = False
+            _analysis_last_heartbeat_mono = None
+            _publish_runtime_state(running=False)
+            _close_instance_lock()
         if _shutdown_reason is not None:
             _diag(f"shutdown requested {_shutdown_reason}")
         for signum, handler in previous_handlers.items():

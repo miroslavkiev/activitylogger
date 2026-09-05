@@ -9,12 +9,14 @@ import os
 import re
 import stat
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Sequence
 
 from markdown_format import CAPTURE_TRIGGERS, sanitize_markdown_inline
+from private_files import read_private_bytes
 from window_titles import FALLBACK_HEADING
 
 
@@ -37,6 +39,8 @@ EVENT_KINDS = frozenset(
         "event",
     }
 )
+WORKLOAD_KINDS = frozenset({"type", "click", "clipboard", "screen", "url", "scroll", "event"})
+LARGE_HEARTBEAT_GAP_SECONDS = 2 * 60 * 60
 ANALYSIS_TRIGGERS = CAPTURE_TRIGGERS | {"historical", "timeline"}
 ANALYSIS_FORMAT_V1 = "activitylogger-analysis-v1"
 ANALYSIS_FORMAT_V2 = "activitylogger-analysis-v2"
@@ -608,7 +612,10 @@ def parse_records(
 
 def read_batches(path: Path) -> tuple[FramedBatch, ...]:
     """Read and verify every committed batch in one shadow file."""
-    data = path.read_bytes()
+    return _parse_batches(read_private_bytes(path))
+
+
+def _parse_batches(data: bytes) -> tuple[FramedBatch, ...]:
     header_end = data.find(HEADER_END.encode("utf-8"))
     if header_end < 0:
         raise ValueError("missing shadow header terminator")
@@ -634,8 +641,12 @@ def read_batches(path: Path) -> tuple[FramedBatch, ...]:
 
 
 def read_intents(path: Path) -> tuple[tuple[str, int, str], ...]:
+    return _parse_intents(read_private_bytes(path))
+
+
+def _parse_intents(data: bytes) -> tuple[tuple[str, int, str], ...]:
     intents: list[tuple[str, int, str]] = []
-    for batch in read_batches(path):
+    for batch in _parse_batches(data):
         rows = batch.body.splitlines()
         if len(rows) != 1:
             raise ValueError("intent batch must contain one row")
@@ -916,35 +927,10 @@ def _fsync_directory(path: Path) -> None:
 def _read_private_file(
     path: Path, *, max_bytes: int | None = None
 ) -> tuple[bool, bytes]:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(path, flags)
+        return True, read_private_bytes(path, max_bytes=max_bytes)
     except FileNotFoundError:
         return False, b""
-    try:
-        info = os.fstat(fd)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
-            or info.st_nlink != 1
-            or info.st_mode & 0o077
-        ):
-            raise OSError("refusing unsafe analysis file")
-        if max_bytes is not None and info.st_size > max_bytes:
-            raise OSError("private analysis file exceeds its size limit")
-        chunks: list[bytes] = []
-        total = 0
-        while True:
-            chunk = os.read(fd, 1024 * 1024)
-            if not chunk:
-                return True, b"".join(chunks)
-            total += len(chunk)
-            if max_bytes is not None and total > max_bytes:
-                raise OSError("private analysis file exceeds its size limit")
-            chunks.append(chunk)
-    finally:
-        os.close(fd)
 
 
 def _sha256(data: bytes) -> str:
@@ -1177,7 +1163,7 @@ def _authoritative_state(
         day=day,
         expected_format=ANALYSIS_FORMAT_V2,
     )
-    intents = read_intents(intent_path(log_dir, day))
+    intents = _parse_intents(intent)
     if not _intents_match_records(intents, records):
         raise ValueError("authoritative analysis differs from intents")
     return canonical, intent, records, records[-1].heading if records else None
@@ -1646,6 +1632,215 @@ def ready_path(log_dir: Path, day: date) -> Path:
     return log_dir / f".daily_log_{day.isoformat()}.ready.json"
 
 
+@dataclass(frozen=True)
+class AnalysisDayInspection:
+    """Payload-free status. Reuse only within one root/cutoff status request."""
+
+    day: str
+    state: str = "unready"
+    exists: bool = False
+    strict_parse: bool = False
+    intent_match: bool = False
+    stable_snapshot: bool = False
+    invalid_marker: bool = False
+    integrity_ok: bool = False
+    ready: bool = False
+    format_name: str = "unknown"
+    events: int = 0
+    heartbeats: int = 0
+    session_starts: int = 0
+    session_stops: int = 0
+    privacy_starts: int = 0
+    privacy_ends: int = 0
+    source_bytes: int = 0
+    last_safe_write_ns: int | None = None
+    quality: dict[str, object] = field(default_factory=dict)
+
+
+def analysis_day_inventory(log_dir: Path) -> tuple[tuple[date, ...], tuple[str, ...]]:
+    """List owned regular daily files and malformed date-shaped names, without reads."""
+    days: list[date] = []
+    malformed: list[str] = []
+    try:
+        root_info = log_dir.lstat()
+        if not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.getuid():
+            return (), ()
+        paths = tuple(log_dir.iterdir())
+    except OSError:
+        return (), ()
+    for path in paths:
+        match = re.fullmatch(r"daily_log_([0-9]{4}-[0-9]{2}-[0-9]{2})\.md", path.name)
+        if match is None:
+            continue
+        try:
+            info = path.lstat()
+        except OSError:
+            continue
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            continue
+        try:
+            days.append(date.fromisoformat(match.group(1)))
+        except ValueError:
+            malformed.append(path.name)
+    return tuple(sorted(days)), tuple(sorted(malformed))
+
+
+def completed_analysis_days(log_dir: Path, *, before: date) -> tuple[date, ...]:
+    return tuple(
+        day for day in analysis_day_inventory(log_dir)[0]
+        if ANALYSIS_ONLY_START_DAY <= day < before
+    )
+
+
+def heartbeat_summary(records: Sequence[AnalysisRecord]) -> dict[str, int | str | None]:
+    heartbeats = sorted(record.captured_at for record in records if record.kind == "heartbeat")
+    gaps = [
+        int((current - previous).total_seconds())
+        for previous, current in zip(heartbeats, heartbeats[1:])
+        if current >= previous
+    ]
+    if heartbeats:
+        day = records[0].section_captured_at.date()
+        day_start = datetime.combine(day, datetime.min.time(), tzinfo=heartbeats[0].tzinfo)
+        day_end = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=heartbeats[-1].tzinfo)
+        gaps.extend((
+            max(0, int((heartbeats[0] - day_start).total_seconds())),
+            max(0, int((day_end - heartbeats[-1]).total_seconds())),
+        ))
+    return {
+        "count": len(heartbeats),
+        "first": heartbeats[0].isoformat(timespec="seconds") if heartbeats else None,
+        "last": heartbeats[-1].isoformat(timespec="seconds") if heartbeats else None,
+        "max_gap_seconds": max(gaps, default=0),
+    }
+
+
+def analysis_quality(records: Sequence[AnalysisRecord], *, source_bytes: int = 0) -> dict[str, object]:
+    """Count known quality limits without returning any captured context or payload."""
+    workload = [record for record in records if record.kind in WORKLOAD_KINDS]
+    unknown = system = paused = storage_gaps = 0
+    for record in workload:
+        heading = record.heading
+        clean_heading = re.sub(r"^(?:🔒 )?\[SECURE (?:APP|FIELD) PAUSED\]\s*", "", heading)
+        paused += clean_heading != heading
+        app = clean_heading.split(" \u2014 ", 1)[0].split(" - ", 1)[0].casefold()
+        unknown += app in {"", "unknown", "[private context]"}
+        system += app in {"loginwindow", "screensaverengine", "windowserver"}
+    for record in records:
+        if record.kind != "heartbeat" or not record.payload.startswith("storage_gap start="):
+            continue
+        start, separator, end = record.payload.removeprefix("storage_gap start=").partition(" end=")
+        try:
+            first, last = datetime.fromisoformat(start), datetime.fromisoformat(end)
+            storage_gaps += bool(separator and first.utcoffset() is not None and last.utcoffset() is not None and last >= first)
+        except (ValueError, TypeError):
+            continue
+    heartbeat = heartbeat_summary(records)
+    warnings: list[str] = []
+    for count, label in ((unknown, "unknown context"), (system, "system-only context"), (paused, "a paused context label")):
+        if count:
+            warnings.append(f"{count} workload events have {label}. Their app attribution needs care.")
+    if storage_gaps:
+        warnings.append(f"{storage_gaps} storage-related capture gap(s) were recorded. Some activity was not captured.")
+    if int(heartbeat["count"]) < 2:
+        warnings.append("Fewer than two heartbeats were recorded, so heartbeat gap coverage cannot be measured.")
+    if int(heartbeat["max_gap_seconds"]) > LARGE_HEARTBEAT_GAP_SECONDS:
+        warnings.append(f"Observed heartbeat gap of {heartbeat['max_gap_seconds']} seconds exceeds {LARGE_HEARTBEAT_GAP_SECONDS} seconds. Gaps do not show work duration.")
+    return {
+        "source_bytes": source_bytes,
+        "workload_events": len(workload),
+        "unknown_context_events": unknown,
+        "system_context_events": system,
+        "paused_heading_events": paused,
+        "storage_gap_count": storage_gaps,
+        "heartbeat_count": heartbeat["count"],
+        "heartbeat_first": heartbeat["first"],
+        "heartbeat_last": heartbeat["last"],
+        "max_heartbeat_gap_seconds": heartbeat["max_gap_seconds"],
+        "warnings": tuple(warnings),
+    }
+
+
+def _snapshot_identity(path: Path) -> tuple[int, ...]:
+    info = path.lstat()
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def inspect_analysis_day(
+    log_dir: Path,
+    day: date,
+    *,
+    today: date | None = None,
+    inspections: dict[date, AnalysisDayInspection] | None = None,
+) -> AnalysisDayInspection:
+    """Parse one day once; a supplied dict belongs only to this root/cutoff request."""
+    if inspections is not None and day in inspections:
+        return inspections[day]
+    cutoff = today or datetime.now().astimezone().date()
+    result = AnalysisDayInspection(day=day.isoformat())
+    analysis_file, invalid_file = analysis_paths(log_dir, day)
+    journal = intent_path(log_dir, day)
+    complete_sources = False
+    try:
+        invalid = _exists_no_follow(invalid_file)
+        present = tuple(_exists_no_follow(path) for path in (analysis_file, journal))
+        complete_sources = all(present)
+        result = replace(result, invalid_marker=invalid, exists=any(present))
+        if all(present):
+            before = tuple(_snapshot_identity(path) for path in (analysis_file, journal))
+            canonical = read_private_bytes(analysis_file)
+            intent = read_private_bytes(journal)
+            text = canonical.decode("utf-8")
+            format_name = _declared_analysis_format(text)
+            result = replace(result, format_name=format_name or "unknown", source_bytes=len(canonical))
+            records = parse_records(text, day=day, expected_format=analysis_format_for_day(day))
+            matched = _intents_match_records(_parse_intents(intent), records)
+            stable = before == tuple(_snapshot_identity(path) for path in (analysis_file, journal))
+            pending = day >= ANALYSIS_ONLY_START_DAY and (
+                _exists_no_follow(_pending_transaction_path(log_dir)) or bool(_pending_temp_paths(log_dir))
+            )
+            invalid = invalid or _exists_no_follow(invalid_file)
+            integrity = matched and stable and not pending and not invalid
+            try:
+                _proof_exists, proof = _read_private_file(ready_path(log_dir, day), max_bytes=4096)
+            except OSError:
+                proof = b""
+            stable = stable and before == tuple(_snapshot_identity(path) for path in (analysis_file, journal))
+            invalid = invalid or _exists_no_follow(invalid_file)
+            pending = pending or (day >= ANALYSIS_ONLY_START_DAY and (
+                _exists_no_follow(_pending_transaction_path(log_dir)) or bool(_pending_temp_paths(log_dir))
+            ))
+            integrity = matched and stable and not pending and not invalid
+            ready = bool(integrity and day >= ANALYSIS_ONLY_START_DAY and _ready_document_matches(log_dir, day, canonical, intent, proof))
+            counts = Counter(record.kind for record in records)
+            result = replace(
+                result, strict_parse=True, intent_match=matched, stable_snapshot=stable,
+                invalid_marker=invalid, integrity_ok=integrity, ready=ready,
+                format_name=format_name or "unknown", events=len(records),
+                heartbeats=counts["heartbeat"], session_starts=counts["session_start"],
+                session_stops=counts["session_stop"], privacy_starts=counts["privacy_pause_start"],
+                privacy_ends=counts["privacy_pause_end"], source_bytes=len(canonical),
+                last_safe_write_ns=max(item[6] for item in before) if integrity else None,
+                quality=analysis_quality(records, source_bytes=len(canonical)),
+            )
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, RecursionError):
+        pass
+    if day >= cutoff:
+        state = "active"
+    elif day < ANALYSIS_ONLY_START_DAY:
+        state = "unsupported"
+    elif result.invalid_marker:
+        state = "invalid"
+    elif not complete_sources:
+        state = "missing"
+    else:
+        state = "ready" if result.ready else "unready"
+    result = replace(result, state=state)
+    if inspections is not None:
+        inspections[day] = result
+    return result
+
+
 _READY_KEYS = frozenset(
     {
         "schema",
@@ -1659,16 +1854,9 @@ _READY_KEYS = frozenset(
 )
 
 
-def validate_day_ready(log_dir: Path, day: date) -> bool:
-    """Independently validate a payload-free completed-day proof."""
+def _ready_document_matches(log_dir: Path, day: date, canonical: bytes, intent: bytes, raw: bytes) -> bool:
+    """Verify proof metadata against the exact bytes already parsed by the caller."""
     try:
-        if _exists_no_follow(_pending_transaction_path(log_dir)) or _pending_temp_paths(
-            log_dir
-        ):
-            return False
-        exists, raw = _read_private_file(ready_path(log_dir, day))
-        if not exists:
-            return False
         document = json.loads(raw)
         if not isinstance(document, dict) or set(document) != _READY_KEYS:
             return False
@@ -1685,17 +1873,17 @@ def validate_day_ready(log_dir: Path, day: date) -> bool:
             return False
         if document["intent"] != day_intent_path.relative_to(log_dir).as_posix():
             return False
-        validate_authoritative_day(log_dir, day)
-        canonical_exists, canonical = _read_private_file(canonical_path)
-        intent_exists, intent = _read_private_file(day_intent_path)
         return bool(
-            canonical_exists
-            and intent_exists
-            and document["canonical_sha256"] == _sha256(canonical)
+            document["canonical_sha256"] == _sha256(canonical)
             and document["intent_sha256"] == _sha256(intent)
         )
-    except (OSError, UnicodeError, ValueError, KeyError, TypeError):
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, RecursionError):
         return False
+
+
+def validate_day_ready(log_dir: Path, day: date) -> bool:
+    """Freshly validate source integrity, invalid markers and the ready proof."""
+    return inspect_analysis_day(log_dir, day).ready
 
 
 def publish_day_ready(log_dir: Path, day: date) -> Path:
@@ -1704,6 +1892,8 @@ def publish_day_ready(log_dir: Path, day: date) -> Path:
         log_dir
     ):
         raise OSError("cannot publish readiness while a transaction is pending")
+    if _exists_no_follow(analysis_paths(log_dir, day)[1]):
+        raise OSError("cannot publish readiness for an invalid analysis day")
     validate_authoritative_day(log_dir, day)
     canonical_path, _invalid_path = analysis_paths(log_dir, day)
     day_intent_path = intent_path(log_dir, day)
@@ -1733,28 +1923,31 @@ def publish_day_ready(log_dir: Path, day: date) -> Path:
     temp = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.tmp"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(temp, flags, 0o600)
     try:
-        os.fchmod(fd, 0o600)
-        _write_all(
-            fd,
-            (
-                json.dumps(
-                    proof,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                )
-                + "\n"
-            ).encode("utf-8"),
-        )
-        os.fsync(fd)
+        fd = os.open(temp, flags, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            _write_all(
+                fd,
+                (
+                    json.dumps(
+                        proof,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                    + "\n"
+                ).encode("utf-8"),
+            )
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        _fsync_directory(destination.parent)
+        os.replace(temp, destination)
+        os.chmod(destination, 0o600, follow_symlinks=False)
+        _fsync_directory(destination.parent)
     finally:
-        os.close(fd)
-    _fsync_directory(destination.parent)
-    os.replace(temp, destination)
-    os.chmod(destination, 0o600, follow_symlinks=False)
-    _fsync_directory(destination.parent)
+        temp.unlink(missing_ok=True)
     if not validate_day_ready(log_dir, day):
         raise OSError("published ready proof did not validate")
     return destination

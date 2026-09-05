@@ -4,7 +4,7 @@ ActivityLogger is a private work journal for one person using a Mac. It records 
 
 It can prepare a focused review of 5 or 7 completed calendar days. ActivityLogger creates the review files, but it does not analyze them, upload them, or act on their contents. You choose a tool you trust and decide what to do with the result.
 
-**Version:** 4.5.1 | **Runtime:** `dist/ActivityLoggerNative.app` | **Operations:** [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md)
+**Version:** 4.6.0 (source) | **Runtime:** `dist/ActivityLoggerNative.app` | **Operations:** [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md)
 
 > ActivityLogger records sensitive plaintext, including typed text and clipboard changes. Use it only on a Mac and user account that you control.
 
@@ -47,19 +47,23 @@ ActivityLogger does not capture screenshots, Screen Recording, audio, video, cam
 
 ActivityLogger runs in the background and has no normal Dock window. While it is running, open `dist/ActivityLoggerNative.app` in Finder to show the Review Center.
 
-Use the three steps in the window:
+The window opens on **Daily status**. It shows capture state, pause reasons, the last safe write, storage and **Recovery help**. Use **Weekly review** for the three steps:
 
 1. Choose the last day and select 5 or 7 consecutive completed calendar days. Select **Create review files**.
 2. Select **Show review files in Finder**. Start with `REVIEW_PROMPT.md`. Review and redact private text before using any online tool.
 3. After the review, choose **Found an idea to try**, **Tried a change**, or **No action**. You can also save a short value note, such as time saved each week.
 
-The Review Center pauses capture while its window is visible. Closing or minimizing it removes only this window pause. Manual pause or a secure app or field can keep capture paused.
+A result draft stays tied to its selected dates. Save it or select **Clear draft** before changing the window. Each text field has a 4,000 character limit. **Show saved results** opens the private outcome file in Finder. New outcomes keep the exact start, end and day count.
+
+Read the context quality and heartbeat gap warnings before trusting the result. Valid files can still have weak labels or missing activity.
+
+The Review Center pauses capture while its window is visible. Switching tabs does not change this pause. Closing or minimizing it removes only this window pause. Manual pause or a secure app or field can keep capture paused.
 
 The Review Center window and its status checks do not show captured text. The review files do contain private captured text.
 
 ## Daily privacy controls
 
-Normal daily use is passive. Use the Review Center when you want to check status or turn manual pause on or off. The same local controls are available from Terminal:
+Normal daily use is passive. Open **Daily status** to check status or turn manual pause on or off. Unknown runtime state is shown as unknown, not as active capture. The same local controls are available from Terminal:
 
 ```bash
 .venv/bin/python scripts/activityloggerctl.py health
@@ -67,6 +71,8 @@ Normal daily use is passive. Use the Review Center when you want to check status
 .venv/bin/python scripts/activityloggerctl.py pause
 .venv/bin/python scripts/activityloggerctl.py resume
 ```
+
+Help, pause and resume work even when the default log config is broken. Read [local recovery help](docs/V2_RECOVERY.md) for storage, readiness and config problems.
 
 Manual pause stops every capture channel. It stays on after a restart. Resume clears only manual pause and never clears a secure-app or secure-field pause.
 
@@ -85,6 +91,8 @@ You can change the log directory in the local config. The signed app stores revi
 ```text
 ~/Library/Application Support/ActivityLogger/
 ```
+
+If a write cannot be prepared safely, capture stops accepting new activity, keeps accepted records in memory and retries with a delay. Keep the app running while storage is blocked. After recovery it records a storage gap.
 
 Private directories use mode `700`, and private files use mode `600`. These files are still sensitive plaintext. ActivityLogger does not redact them and does not delete them automatically. They stay until you archive or delete them. Keep FileVault enabled, avoid shared backups, and review every file before external use.
 
@@ -142,7 +150,17 @@ Create a weekly pack without opening the Review Center:
 .venv/bin/python scripts/export_weekly_review.py --end YYYY-MM-DD --days 5
 ```
 
+The command prints the full pack path. Weekly packs and outcomes use the user Application Support folder by default. One-day export tools use `private_analysis_review/` in the repository by default and print the full output path. Use `--output-dir` to choose another private folder.
+
 Use `--days 7` for seven days. Every selected day must be complete, use the current v2 format, and pass its private integrity check.
+
+Save a review outcome from Terminal with its exact window:
+
+```bash
+.venv/bin/python scripts/activityloggerctl.py review --week YYYY-MM-DD --days 5 --outcome tried --value-result "Saved 15 minutes each week"
+```
+
+`--week` is the last day, matching the pack end date. Omitting `--days` is supported for older notes whose exact window is unknown.
 
 Check one day without printing captured text:
 
@@ -166,6 +184,8 @@ For older log formats, `compact_markdown_log.py` can reduce repeated text and `h
 
 ## Documentation map
 
+- [`docs/V2_RECOVERY.md`](docs/V2_RECOVERY.md): offline recovery for status, storage, day readiness and review files.
+- [`docs/AUDIT_REMEDIATION_2026-09-05.md`](docs/AUDIT_REMEDIATION_2026-09-05.md): the 16 audit fixes and Option C validation.
 - [`docs/MACOS_TCC.md`](docs/MACOS_TCC.md): production setup, signing, permissions, restart, rollback, and recovery.
 - [`docs/specs/00-MASTER.md`](docs/specs/00-MASTER.md): current product, privacy, capture, and storage contracts.
 - [`docs/specs/F2-config.md`](docs/specs/F2-config.md): every config key, default, and allowed range.
@@ -174,6 +194,8 @@ For older log formats, `compact_markdown_log.py` can reduce repeated text and `h
 
 ## Latest recorded verification
 
-Version 4.5.1 passed 514 tests with 1 skipped, lint, dependency checks, and the strict dependency audit with no known vulnerabilities. The signed build, certificate continuity, bundle checks, Launch Agent restart, one-process check, private file modes, and daily v2 integrity also passed. Live verification showed the guided Review Center, selected its prepared prompt in Finder, and kept capture paused while the Review Center was active and Finder had focus. That run did not recheck capture resume after closing the window.
+The 4.6.0 source passed 606 tests, Ruff critical checks, dependency consistency and the strict dependency audit with no known vulnerabilities. Separate code, UX and final integration reviews found no unresolved material issue in their reviewed scope. All 194 completed daily logs match their pre-change hashes.
 
-This is recorded verification, not a promise that capture has full coverage on every future day. Use the Review Center health and freshness checks before trusting a review pack.
+Local deployment is pending a Mac/keychain unlock. Both canonical build attempts reached signing, then macOS denied keychain authorization before any installed app or process was changed. The installed signed app remains 4.5.1 with its existing process. New live tab and capture checks are still required after the signed restart. See [the current verification record](docs/specs/IMPL-STATUS.md).
+
+These results do not prove full capture on every future day. Check Daily status and the pack's quality notes before trusting a review result.

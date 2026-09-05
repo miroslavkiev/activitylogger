@@ -35,6 +35,7 @@ def clear_logger_runtime() -> None:
     """Clear buffers, pause/url/scroll state, and drain the AX queue."""
     with il._lock:
         il._current_heading = "App - Window"
+        il._heading_native_context = None
         il._current_keystrokes.clear()
         il._current_events.clear()
         il._sections.clear()
@@ -59,6 +60,8 @@ def clear_logger_runtime() -> None:
         il._privacy_generation = 0
         il._manual_control_revision = 0
         il._manual_control_pending = None
+        il._manual_state_retry_at = 0.0
+        il._manual_state_retry_delay = 0.0
         il._window_bucket = None
         il._scan_pending = False
         il._last_key_activity_mono = None
@@ -76,6 +79,13 @@ def clear_logger_runtime() -> None:
         il._analysis_sequence = itertools.count(1)
         il._window_apply_generation = 0
         il._flush_failed = False
+        il._storage_blocked = False
+        il._storage_gap_started_at = None
+        il._pending_storage_gap = None
+        il._file_flush_deadline = None
+        il._file_retry_delay = 0.0
+        il._readiness_reconciled_day = None
+        il._readiness_candidates.clear()
     il._stop_event.clear()
     il._shutdown_reason = None
     il._key_deadline_changed.clear()

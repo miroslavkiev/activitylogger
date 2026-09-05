@@ -6,10 +6,8 @@ import fcntl
 import json
 import os
 import pwd
-import re
 import signal
 import stat
-import tempfile
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -17,24 +15,26 @@ from pathlib import Path
 
 from analysis_log import (
     ANALYSIS_ONLY_START_DAY,
+    AnalysisDayInspection,
+    analysis_day_inventory,
     analysis_paths,
     intent_path,
+    inspect_analysis_day,
     ready_path,
-    validate_day_ready,
 )
-from analysis_view import DEFAULT_OUTPUT_DIR
-from scripts.check_analysis_day import check_day
+from analysis_view import DEFAULT_OUTPUT_DIR, _stage_private_text
+from operator_errors import OperatorError
+from private_files import open_private_file, read_private_bytes
+from weekly_review import weekly_pack_name, weekly_window_dates
 
 RUNTIME_STATE_SCHEMA = 1
 RUNTIME_DIR_NAME = "ActivityLogger"
 LOCK_NAME = "activitylogger.lock"
 STATE_NAME = "operator_state.json"
+STATE_PENDING_NAME = ".operator_state.pending"
 OUTCOMES_NAME = "weekly_review_outcomes.md"
-_DAY_NAME = re.compile(r"^daily_log_(\d{4}-\d{2}-\d{2})\.md$")
-_PACK_NAME = re.compile(
-    r"^weekly_review_\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}_(?:5|7)d$"
-)
 _OUTCOMES = frozenset({"accepted", "ignored", "tried"})
+PAUSE_REASONS = frozenset({"manual", "secure_app", "secure_field", "review_window", "storage"})
 
 
 @dataclass(frozen=True)
@@ -73,6 +73,8 @@ def write_runtime_state(
     manual_paused: bool,
     capture_paused: bool,
     control_revision: int,
+    storage_blocked: bool = False,
+    pause_reasons: tuple[str, ...] = (),
     home: Path | None = None,
 ) -> Path:
     root = _ensure_private_dir(runtime_dir(home), parents=True)
@@ -84,69 +86,97 @@ def write_runtime_state(
         "manual_paused": manual_paused,
         "capture_paused": capture_paused,
         "control_revision": control_revision,
+        "storage_blocked": storage_blocked,
+        "pause_reasons": list(pause_reasons),
         "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
-    fd, raw_path = tempfile.mkstemp(dir=root, prefix=f".{STATE_NAME}.", suffix=".tmp")
-    staged = Path(raw_path)
+    if not _valid_runtime_state(document):
+        raise ValueError("invalid runtime state")
+    staged = None
+    pending_staged = None
+    pending = root / STATE_PENDING_NAME
     try:
-        os.fchmod(fd, 0o600)
-        data = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode()
-        offset = 0
-        while offset < len(data):
-            written = os.write(fd, data[offset:])
-            if written <= 0:
-                raise OSError("short runtime state write")
-            offset += written
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    try:
+        staged = _stage_private_text(root, STATE_NAME, json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n")
+        pending_staged = _stage_private_text(root, STATE_PENDING_NAME, "")
+        os.replace(pending_staged, pending)
+        _fsync_dir(root)
         os.replace(staged, destination)
         os.chmod(destination, 0o600, follow_symlinks=False)
         _fsync_dir(root)
     finally:
-        try:
-            staged.unlink()
-        except FileNotFoundError:
-            pass
+        for temporary in (staged, pending_staged):
+            if temporary is not None:
+                try:
+                    temporary.unlink()
+                except FileNotFoundError:
+                    pass
+    # The marker covers replacement, sync and cleanup failures. A crash that
+    # restores its directory entry causes an unverified state on next startup.
+    # No fallible publication work may follow successful removal.
+    pending.unlink()
     return destination
 
 
 def _read_private_json(path: Path) -> dict[str, object] | None:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(path, flags)
+        raw = read_private_bytes(path, max_bytes=4096)
     except FileNotFoundError:
         return None
-    try:
-        info = os.fstat(fd)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
-            or info.st_nlink != 1
-            or info.st_mode & 0o077
-            or info.st_size > 4096
-        ):
-            raise OSError("refusing unsafe private state")
-        raw = os.read(fd, 4097)
-    finally:
-        os.close(fd)
     value = json.loads(raw)
     return value if isinstance(value, dict) else None
 
 
+def _valid_runtime_state(state: dict[str, object]) -> bool:
+    if type(state.get("schema")) is not int or state["schema"] != RUNTIME_STATE_SCHEMA:
+        return False
+    if type(state.get("pid")) is not int or state["pid"] <= 0:
+        return False
+    if type(state.get("control_revision")) is not int or state["control_revision"] < 0:
+        return False
+    if any(type(state.get(name)) is not bool for name in ("running", "manual_paused", "capture_paused")):
+        return False
+    storage = state.get("storage_blocked", False)
+    if type(storage) is not bool or ((storage or state["manual_paused"]) and not state["capture_paused"]):
+        return False
+    reasons = state.get("pause_reasons", [])
+    if not isinstance(reasons, list) or any(type(reason) is not str or reason not in PAUSE_REASONS for reason in reasons):
+        return False
+    if len(set(reasons)) != len(reasons) or (reasons and not state["capture_paused"]):
+        return False
+    if ("manual" in reasons and not state["manual_paused"]) or ("storage" in reasons and not storage):
+        return False
+    try:
+        return isinstance(state.get("updated_at"), str) and datetime.fromisoformat(state["updated_at"]).utcoffset() is not None
+    except ValueError:
+        return False
+
+
+def _runtime_state_pending(home: Path | None = None) -> bool:
+    try:
+        (runtime_dir(home) / STATE_PENDING_NAME).lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def read_runtime_state(home: Path | None = None) -> dict[str, object] | None:
     try:
+        if _runtime_state_pending(home):
+            return None
         state = _read_private_json(runtime_dir(home) / STATE_NAME)
-        if state is None or state.get("schema") != RUNTIME_STATE_SCHEMA:
+        if state is None or not _valid_runtime_state(state) or _runtime_state_pending(home):
             return None
         return state
-    except (OSError, UnicodeError, ValueError, TypeError):
+    except (OSError, UnicodeError, ValueError, TypeError, RecursionError):
         return None
 
 
 def initial_manual_pause(home: Path | None = None) -> bool:
     """Keep a prior pause, and fail closed if an existing state is unreadable."""
+    if _runtime_state_pending(home):
+        return True
     path = runtime_dir(home) / STATE_NAME
     try:
         path.lstat()
@@ -162,10 +192,9 @@ def initial_manual_pause(home: Path | None = None) -> bool:
 
 def process_state(home: Path | None = None) -> ProcessState:
     path = runtime_dir(home) / LOCK_NAME
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(path, flags)
-    except FileNotFoundError:
+        fd, _info = open_private_file(path, max_bytes=32)
+    except OSError:
         return ProcessState(False, None)
     try:
         info = os.fstat(fd)
@@ -199,8 +228,10 @@ def process_state(home: Path | None = None) -> ProcessState:
 def set_manual_pause(paused: bool, *, home: Path | None = None, timeout: float = 5.0) -> dict[str, object]:
     process = process_state(home)
     if not process.running or process.pid is None:
-        raise RuntimeError("ActivityLogger is not running")
+        raise OperatorError("logger_stopped")
     before = read_runtime_state(home) or {}
+    if before.get("pid") != process.pid:
+        before = {}
     revision = int(before.get("control_revision", -1))
     os.kill(process.pid, signal.SIGUSR1 if paused else signal.SIGUSR2)
     deadline = time.monotonic() + timeout
@@ -216,7 +247,7 @@ def set_manual_pause(paused: bool, *, home: Path | None = None, timeout: float =
         if not process_state(home).running:
             break
         time.sleep(0.05)
-    raise RuntimeError("manual privacy control was not confirmed")
+    raise OperatorError("control_unconfirmed")
 
 
 def _mode(path: Path) -> str:
@@ -229,21 +260,43 @@ def _mode(path: Path) -> str:
     return f"{stat.S_IMODE(info.st_mode):03o}"
 
 
-def health_report(log_dir: Path, day: date, *, home: Path | None = None) -> dict[str, object]:
+def health_report(
+    log_dir: Path,
+    day: date,
+    *,
+    home: Path | None = None,
+    inspections: dict[date, AnalysisDayInspection] | None = None,
+) -> dict[str, object]:
+    checked_at = datetime.now().astimezone()
     process = process_state(home)
     analysis_file, invalid_file = analysis_paths(log_dir, day)
     intent_file = intent_path(log_dir, day)
     proof_file = ready_path(log_dir, day)
+    checked = inspect_analysis_day(log_dir, day, today=checked_at.date(), inspections=inspections)
+    state = read_runtime_state(home)
+    valid_state = bool(
+        process.running and state and state["running"] and state["pid"] == process.pid
+    )
     report: dict[str, object] = {
         "running": process.running,
         "pid": process.pid,
         "day": day.isoformat(),
-        "format": "unknown",
-        "intent_match": False,
-        "invalid_marker": invalid_file.exists(),
-        "readiness": validate_day_ready(log_dir, day),
+        "format": checked.format_name,
+        "intent_match": checked.intent_match,
+        "invalid_marker": checked.invalid_marker,
+        "readiness": checked.ready,
+        "day_state": checked.state,
+        "quality": checked.quality,
         "last_safe_write": "unknown",
         "freshness_seconds": "unknown",
+        "checked_at": checked_at.isoformat(timespec="seconds"),
+        "runtime_state_valid": valid_state,
+        "state_updated_at": state["updated_at"] if valid_state else None,
+        "state_age_seconds": None,
+        "manual_paused": state["manual_paused"] if valid_state else None,
+        "capture_paused": state["capture_paused"] if valid_state else None,
+        "storage_blocked": state.get("storage_blocked", False) if valid_state else None,
+        "pause_reasons": tuple(state.get("pause_reasons", ())) if valid_state else (),
         "log_dir_mode": _mode(log_dir),
         "analysis_mode": _mode(analysis_file),
         "intent_mode": _mode(intent_file),
@@ -252,56 +305,85 @@ def health_report(log_dir: Path, day: date, *, home: Path | None = None) -> dict
         "lock_mode": _mode(runtime_dir(home) / LOCK_NAME),
         "state_mode": _mode(runtime_dir(home) / STATE_NAME),
     }
-    state = read_runtime_state(home)
-    report["manual_paused"] = state.get("manual_paused") if state else "unknown"
-    report["capture_paused"] = state.get("capture_paused") if state else "unknown"
-    if (
-        report["log_dir_mode"] != "700"
-        or report["analysis_mode"] != "600"
-        or report["intent_mode"] != "600"
-    ):
-        return report
-    try:
-        checked = check_day(log_dir, day)
-        report["format"] = checked.format_name
-        report["intent_match"] = checked.intent_match
-        report["invalid_marker"] = checked.invalid_marker
-        if checked.strict_parse and checked.intent_match and checked.stable_snapshot:
-            safe_write = max(analysis_file.stat().st_mtime, intent_file.stat().st_mtime)
-            report["last_safe_write"] = datetime.fromtimestamp(safe_write).astimezone().isoformat(timespec="seconds")
-            report["freshness_seconds"] = max(0, int(time.time() - safe_write))
-    except (OSError, UnicodeError, ValueError, KeyError, TypeError):
-        pass
+    if valid_state:
+        report["state_age_seconds"] = max(
+            0, int((checked_at - datetime.fromisoformat(state["updated_at"])).total_seconds())
+        )
+    if checked.integrity_ok and checked.last_safe_write_ns is not None:
+        safe_write = checked.last_safe_write_ns / 1_000_000_000
+        report["last_safe_write"] = datetime.fromtimestamp(safe_write).astimezone().isoformat(timespec="seconds")
+        report["freshness_seconds"] = max(0, int(checked_at.timestamp() - safe_write))
     return report
 
 
-def _private_tree_size(root: Path) -> tuple[int, int]:
+def _private_tree_size(root: Path, *, exclude: Path | None = None) -> tuple[int, int]:
+    """Count safe private file bytes without reading any captured content."""
     total = 0
     unsafe = 0
-    if not root.is_dir():
-        return total, unsafe
-    info = root.lstat()
-    if (
-        not stat.S_ISDIR(info.st_mode)
-        or info.st_uid != os.getuid()
-        or info.st_mode & 0o077
-    ):
+    try:
+        info = root.lstat()
+    except FileNotFoundError:
+        return 0, 0
+    except OSError:
         return 0, 1
-    for current, directories, files in os.walk(root, followlinks=False):
-        base = Path(current)
-        directories[:] = [name for name in directories if not (base / name).is_symlink()]
-        for name in files:
-            path = base / name
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        return 0, 1
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        try:
+            children = tuple(current.iterdir())
+        except OSError:
+            unsafe += 1
+            continue
+        for path in children:
+            if exclude is not None and path.absolute() == exclude.absolute():
+                continue
             try:
                 info = path.lstat()
             except OSError:
                 unsafe += 1
                 continue
-            if stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o077:
+            if info.st_uid != os.getuid() or info.st_mode & 0o077:
+                unsafe += 1
+            elif stat.S_ISDIR(info.st_mode):
+                pending.append(path)
+            elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
                 total += info.st_size
             else:
                 unsafe += 1
     return total, unsafe
+
+
+def _review_pack_counts(output_dir: Path) -> tuple[int, int]:
+    try:
+        info = output_dir.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            return 0, 0
+        children = tuple(output_dir.iterdir())
+    except OSError:
+        return 0, 0
+    complete = incomplete = 0
+    for path in children:
+        try:
+            parts = path.name.split("_")
+            if len(parts) != 5 or parts[:2] != ["weekly", "review"] or parts[4] not in {"5d", "7d"}:
+                continue
+            if weekly_pack_name(date.fromisoformat(parts[3]), int(parts[4][0])) != path.name:
+                continue
+            info = path.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                incomplete += 1
+                continue
+        except (OSError, ValueError):
+            continue
+        try:
+            fd, _info = open_private_file(path / "INDEX.json")
+            os.close(fd)
+            complete += 1
+        except OSError:
+            incomplete += 1
+    return complete, incomplete
 
 
 def storage_report(
@@ -309,40 +391,42 @@ def storage_report(
     *,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     today: date | None = None,
+    inspections: dict[date, AnalysisDayInspection] | None = None,
 ) -> dict[str, object]:
     current_day = today or datetime.now().astimezone().date()
-    days: list[date] = []
-    if log_dir.is_dir():
-        for path in log_dir.iterdir():
-            match = _DAY_NAME.fullmatch(path.name)
-            if match and path.is_file() and not path.is_symlink():
-                days.append(date.fromisoformat(match.group(1)))
-    days.sort()
+    days, malformed = analysis_day_inventory(log_dir)
     completed = [day for day in days if day < current_day]
-    missing_ready = [
-        day
-        for day in completed
-        if day >= ANALYSIS_ONLY_START_DAY and not validate_day_ready(log_dir, day)
+    checked_days = [
+        inspect_analysis_day(log_dir, day, today=current_day, inspections=inspections)
+        for day in completed if day >= ANALYSIS_ONLY_START_DAY
     ]
+    problem_days = [{"day": item.day, "state": item.state} for item in checked_days if not item.ready]
     total_bytes, unsafe_files = _private_tree_size(log_dir)
-    packs = 0
-    if output_dir.is_dir() and not output_dir.is_symlink():
-        packs = sum(
-            1
-            for path in output_dir.iterdir()
-            if path.is_dir()
-            and _PACK_NAME.fullmatch(path.name)
-            and (path / "INDEX.json").is_file()
-        )
+    review_bytes, unsafe_review = _private_tree_size(output_dir)
+    # The common case has sibling roots. A custom nested root is counted once.
+    if output_dir.absolute().is_relative_to(log_dir.absolute()):
+        unique_review_bytes = 0
+    elif log_dir.absolute().is_relative_to(output_dir.absolute()):
+        unique_review_bytes, _ = _private_tree_size(output_dir, exclude=log_dir)
+    else:
+        unique_review_bytes = review_bytes
+    packs, incomplete_packs = _review_pack_counts(output_dir)
     return {
         "total_private_log_bytes": total_bytes,
+        "private_review_bytes": review_bytes,
+        "total_log_and_review_bytes": total_bytes + unique_review_bytes,
         "unsafe_files": unsafe_files,
+        "unsafe_review_items": unsafe_review,
         "oldest_day": days[0].isoformat() if days else "none",
         "newest_day": days[-1].isoformat() if days else "none",
         "completed_days": len(completed),
         "review_packs": packs,
-        "missing_readiness_proofs": len(missing_ready),
-        "missing_readiness_days": ",".join(day.isoformat() for day in missing_ready) or "none",
+        "incomplete_review_packs": incomplete_packs,
+        "missing_readiness_proofs": len(problem_days),
+        "missing_readiness_days": ",".join(item["day"] for item in problem_days) or "none",
+        "malformed_day_count": len(malformed),
+        "malformed_day_files": malformed,
+        "problem_days": problem_days,
     }
 
 
@@ -352,18 +436,22 @@ def record_review_outcome(
     value_result: str,
     notes: str,
     *,
+    days: int | None = None,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
 ) -> Path:
+    if type(week) is not date:
+        raise OperatorError("invalid_window")
+    window = weekly_window_dates(week, days) if days is not None else None
     if outcome not in _OUTCOMES:
-        raise ValueError("outcome must be accepted, ignored, or tried")
+        raise OperatorError("outcome_invalid")
     if len(value_result) > 4000 or len(notes) > 4000:
-        raise ValueError("review outcome text is too long")
+        raise OperatorError("text_too_long")
     dash_map = {0x2014: "-", 0x2013: "-"}
     value_result = value_result.translate(dash_map)
     notes = notes.translate(dash_map)
     root = _ensure_private_dir(output_dir)
     destination = root / OUTCOMES_NAME
-    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(destination, flags, 0o600)
     try:
@@ -377,9 +465,11 @@ def record_review_outcome(
             raise OSError("refusing unsafe review outcome file")
         os.fchmod(fd, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX)
-        empty = info.st_size == 0
+        empty = os.fstat(fd).st_size == 0
         entry = {
             "week": week.isoformat(),
+            "window": {"start": window[0].isoformat() if window else None, "end": week.isoformat(), "calendar_days": days},
+            "pack": weekly_pack_name(week, days) if window else None,
             "recorded_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "outcome": outcome,
             "value_result": value_result,

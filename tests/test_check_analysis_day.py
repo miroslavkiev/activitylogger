@@ -85,7 +85,8 @@ def test_check_analysis_day_fails_closed_without_printing_payload(tmp_path):
     assert result.returncode == 1
     assert "strict_parse=false" in result.stdout
     assert "ok=false" in result.stdout
-    assert "error=analysis check failed" in result.stderr
+    assert "error=Analysis check failed" in result.stderr
+    assert "Recovery help" in result.stderr
     assert secret not in result.stdout
     assert secret not in result.stderr
 

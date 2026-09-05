@@ -1,6 +1,6 @@
 # F3 buffers, deadlines, flush, and lifecycle
 
-**Status:** current persistence contract for ActivityLogger 4.5.1. Current acceptance evidence is in [`IMPL-STATUS.md`](IMPL-STATUS.md).
+**Status:** current persistence contract for ActivityLogger 4.6.0. Current acceptance evidence is in [`IMPL-STATUS.md`](IMPL-STATUS.md).
 
 ## Buffer model
 
@@ -9,7 +9,7 @@
 - `_sections` holds sealed sections with heading, events, display timestamp, and timezone-aware `captured_at`.
 - Pending click reservations occupy ordered section positions but cannot be persisted until enrichment resolves or the reservation expires.
 
-The configured soft caps are 2,000 key units, 500 events, and 200 sections. Hitting a cap forces joining or durable flush. On a repeated write failure, restoration keeps the newest bounded sections and emits a diagnostic if older entries must be dropped.
+The configured soft caps are 2,000 key units, 500 events, and 200 sections. Hitting a cap forces joining or durable flush. The canonical v2 writer never trims accepted records after a known prepare failure. It blocks new admission, preserves records in memory and retries with a bounded delay. The historical legacy restoration path retains its older bounded behavior for pre-cutover days.
 
 ## Keys and typing idle
 
@@ -46,11 +46,11 @@ For local day 2026-08-27 and later, `daily_log_YYYY-MM-DD.md` is the strict v2 c
 4. After manifest publication, remove only the records now owned by that transaction from memory.
 5. Write and verify the exact planned outputs, then remove the pending manifest.
 
-A failure before manifest publication leaves v2 records in memory for a later retry. Once the manifest exists, its records must never return to memory because that could write them twice. An uncertain prepare or any finalization failure stops capture and leaves recovery evidence for the next startup. Startup recovery completes a valid recoverable transaction and validates canonical-to-intent parity before capture continues. If a target no longer matches a safe planned state, startup refuses to capture and requires repair.
+A known failure before manifest publication leaves v2 records in memory for a later retry and blocks new capture. This storage block is separate from privacy pause and does not clear accepted key, event or section buffers. Pending click work settles under its existing bounds. After a successful durable write, capture can resume and one heartbeat records the storage gap. Routine marker generation cannot grow a blocked queue. Once the manifest exists, its records must never return to memory because that could write them twice. An uncertain prepare or any finalization failure stops capture and leaves recovery evidence for the next startup. Startup recovery completes a valid recoverable transaction and validates canonical-to-intent parity before capture continues. If a target no longer matches a safe planned state, startup refuses to capture and requires repair.
 
-The first valid next-day heartbeat may publish `.daily_log_YYYY-MM-DD.ready.json` for the completed day. This payload-free proof binds the canonical and intent hashes. It proves source integrity, not full-day capture coverage.
+After a healthy later commit, startup or day-change reconciliation checks existing completed days and may publish missing `.daily_log_YYYY-MM-DD.ready.json` proofs. It covers an offline gap without inventing missing days. Invalid days stay invalid. This payload-free proof binds the canonical and intent hashes. It proves source integrity, not full-day capture coverage.
 
-The file writer waits on its deadline or an explicit wake event. Failure uses bounded exponential backoff up to 60 seconds. It does not busy-poll.
+The file writer waits on an absolute monotonic deadline or an explicit wake event. Waking does not move the deadline. Cap-triggered flushes and writer retries share the same serialized deadline. Failure uses bounded exponential backoff up to 60 seconds. Runtime-state writes use their own bounded retry deadline and always clean unfinished temporary files; a failed manual-resume publication keeps capture paused. One fixed private pending marker makes unfinished runtime-state publication unverified, including replacement followed by a failed directory sync. The marker is removed only after all publication and temporary-file cleanup work succeeds, so a failed resume cannot be acknowledged as complete. It does not busy-poll.
 
 ## Shutdown and worker supervision
 

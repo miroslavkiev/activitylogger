@@ -1,6 +1,6 @@
 # ActivityLogger master specification
 
-**Status:** current contract for ActivityLogger 4.5.1. See [`IMPL-STATUS.md`](IMPL-STATUS.md) for the latest accepted source and live deployment proof.
+**Status:** current contract for ActivityLogger 4.6.0. See [`IMPL-STATUS.md`](IMPL-STATUS.md) for the latest accepted source and live deployment proof.
 
 This document is the cross-feature contract. [`00-SCOPE.md`](00-SCOPE.md) owns product bounds, [`F2-config.md`](F2-config.md) owns config keys, and [`docs/MACOS_TCC.md`](../MACOS_TCC.md) owns production operations.
 
@@ -8,7 +8,7 @@ This document is the cross-feature contract. [`00-SCOPE.md`](00-SCOPE.md) owns p
 
 ActivityLogger is one macOS process that records a private, human-readable activity transcript into daily Markdown. It captures active app and window context, character-level keys and hotkeys, clicks enriched through Accessibility, changed Accessibility text, and clipboard changes. Browser URLs, trigger annotations, and scroll capture are optional.
 
-There is no screenshot, Screen Recording, OCR, audio, video, JSONL, SQLite, network service, or automatic retention service.
+There is no screenshot, Screen Recording, OCR, audio, video, SQLite, network service, or automatic retention service. Canonical activity and private review outcomes use Markdown.
 
 ## Runtime and build
 
@@ -21,7 +21,7 @@ There is no screenshot, Screen Recording, OCR, audio, video, JSONL, SQLite, netw
 
 ## Privacy contract
 
-Configured secure-app matching and Accessibility secure-field detection pause every capture channel. An unknown result is unsafe and fails closed. Key handling performs a synchronous secure-app and secure-field decision before appending. Asynchronous work carries privacy and context generations and is discarded if state changes.
+Configured secure-app matching and Accessibility secure-field detection pause every capture channel. An unknown result is unsafe and fails closed. Capture admission verifies the current app and secure field before taking data and aligns the event heading with that context. Queued Accessibility work checks that context before reading and again before keeping the result. Asynchronous work carries privacy and context generations and is discarded if state changes.
 
 On a pause edge, in-flight keys, modifiers, scroll state, click reservations, and capture context that could cross the boundary are discarded. Clipboard change counts advance during a pause so paused content cannot appear later.
 
@@ -33,12 +33,12 @@ On a pause edge, in-flight keys, modifiers, scroll state, click reservations, an
 - Clipboard reads use change counts plus digests, retain no unnecessary plaintext state, and retry initialization with bounded backoff.
 - Accessibility scans have depth, child, character, global-node, time, queue, and debounce bounds. Unknown or stale results are discarded.
 - File, typing, and scroll timers wait on stateful deadlines rather than fixed polling.
-- File flush is serialized and groups records by capture date. Before the v2-only cutover, the legacy writer restores only groups that were not written. Buffer caps bound retry memory.
+- File flush is serialized and groups records by capture date. Before the v2-only cutover, the legacy writer restores only groups that were not written. On a known prepare failure, admission stops while accepted records stay in memory for bounded retries. This storage block is separate from privacy pause, so it does not discard accepted data. A successful recovery records one payload-free storage gap marker. Frequent wakeups do not move the file deadline.
 - Starting on local day 2026-08-27, the canonical daily file is strict `activitylogger-analysis-v2` Markdown and the legacy writer is disabled for that day and later.
 - Each v2 flush publishes a private pending transaction before its records leave memory. The transaction owns exact planned appends to the canonical Markdown and its intent journal. Commit verifies both outputs before removing the pending transaction.
 - Once a pending transaction owns v2 records, those records are never restored to the in-memory buffer. An uncertain prepare or commit fails closed and stops capture so startup recovery can finish the same transaction without writing a duplicate.
 - Startup completes a valid recoverable pending transaction, then validates the current canonical v2 day and its complete intent stream before capture continues. If saved files no longer match a safe planned state, startup refuses to capture and requires repair.
-- The first valid next-day heartbeat may publish a payload-free ready proof for the completed day. A ready proof binds hashes for the canonical file and intent journal. It proves integrity, not continuous capture coverage.
+- A healthy later commit triggers startup or day-change checks of existing completed days, including days before an offline gap, and may publish missing ready proofs. Missing or invalid days are never invented or repaired by this check. A ready proof binds hashes for the canonical file and intent journal. It proves integrity, not continuous capture coverage.
 - SIGTERM and SIGINT request coordinated shutdown. Listeners and workers stop, a final flush runs, and fatal worker or persistence failure returns a nonzero status.
 
 ## Optional features
@@ -53,13 +53,16 @@ On a pause edge, in-flight keys, modifiers, scroll state, click reservations, an
 ## Local review and operator controls
 
 - The native Review Center stays hidden during Launch Agent startup and opens when the running app is opened again.
+- The native Daily status and Weekly review tabs share one whole-window privacy pause. Switching tabs never clears it.
 - Its status view is payload-free. It shows health, last safe write freshness, privacy pause state, fixed-window weekly readiness, and private storage totals. ActivityLogger creates private review files but does not analyze or send them.
 - The guided flow is to choose an exact completed 5-day or 7-day window, create the files, show them in Finder and start with `REVIEW_PROMPT.md`, then record the local result. Private text must be reviewed and redacted before any online use.
 - Capture stays paused while the Review Center is visible. Closing or minimizing it clears only that window pause. Manual, secure-app, and secure-field pauses remain in force.
 - Manual pause uses the same fail-closed capture gate as secure apps and secure fields. Resume clears only the manual pause. The state is private, durable, and restored after restart.
 - A weekly pack accepts only an exact completed 5-day or 7-day v2 window with valid ready proofs. It never fills a missing day with an older day.
 - Weekly output is private and atomic. `INDEX.json` is the completion marker and is published last after source hashes are checked again.
-- Review outcomes are explicit local operator notes. The logger does not infer or send them.
+- Review outcomes are explicit local operator notes with exact start, end, day count and pack identity. A draft cannot silently move to another window. Each text field is limited to 4,000 characters. The logger does not infer or send outcomes.
+- One request shares day inspections across health, storage and weekly readiness. Export always checks the sources again. Prepared packs reopen from their private completion index without requiring the sources to be present.
+- Context labels, workload counts and heartbeat gaps are quality warnings, separate from integrity. The bundled offline recovery guide describes safe next steps.
 
 Unsafe full-URL mode and remote ActivityWatch access emit startup warnings. Browser URL capture never requires Screen Recording.
 

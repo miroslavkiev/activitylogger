@@ -152,7 +152,7 @@ def test_focus_refresh_cannot_overwrite_newer_secure_mark(monkeypatch):
 
 
 def test_changed_pid_bypasses_classification_throttle():
-    identities = iter([(10, "Safari", "Page"), (11, "1Password", "Vault")])
+    identities = iter([(10, "Safari", "Page"), (10, "Safari", "Page"), (11, "1Password", "Vault")])
     with (
         patch.object(il, "_frontmost_app_identity", side_effect=lambda: next(identities)),
         patch.object(il, "sync_secure_field_from_focus", return_value=False),
@@ -164,7 +164,7 @@ def test_changed_pid_bypasses_classification_throttle():
 
 
 def test_same_pid_title_change_is_reclassified_immediately():
-    identities = iter([(10, "Safari", "Page"), (10, "Safari", "Bitwarden Login")])
+    identities = iter([(10, "Safari", "Page"), (10, "Safari", "Page"), (10, "Safari", "Bitwarden Login")])
     with (
         patch.object(il, "_frontmost_app_identity", side_effect=lambda: next(identities)),
         patch.object(il, "sync_secure_field_from_focus", return_value=False),
@@ -345,7 +345,7 @@ def test_click_reservation_preserves_callback_heading(monkeypatch):
     il._current_heading = "After"
     pending_id = jobs[0][3]
     assert il._resolve_pending_click(pending_id, "Button 'OK'", context) is True
-    assert il._sections[-1]["heading"] == "Before"
+    assert il._sections[-1]["heading"] == il.build_heading_body("Safari", "Page")
     assert "Клік" in il._sections[-1]["events"][0]
 
 
@@ -361,7 +361,7 @@ def test_click_queue_failure_discards_placeholder(monkeypatch):
 
 def test_click_context_mismatch_discards_placeholder(monkeypatch):
     identities = iter(
-        [(1, "Safari", "Before"), (2, "Finder", "After")]
+        [(1, "Safari", "Before"), (1, "Safari", "Before"), (2, "Finder", "After"), (2, "Finder", "After")]
     )
     jobs: list[tuple] = []
     monkeypatch.setattr(
@@ -440,6 +440,7 @@ def test_screen_capture_spanning_pause_is_discarded(monkeypatch):
 
 def test_url_capture_spanning_pause_is_absorbed(monkeypatch):
     monkeypatch.setattr(il, "BROWSER_URL_CAPTURE", True)
+    monkeypatch.setattr(il, "sync_secure_field_from_focus", lambda **_kwargs: False)
 
     def provider(_app):
         il._set_pause(field=True)
@@ -735,13 +736,73 @@ def test_main_handles_signal_during_config_before_startup_and_cleans_up(monkeypa
     monkeypatch.setattr(
         il, "_close_instance_lock", lambda: events.append("close lock")
     )
+    publish = MagicMock()
+    monkeypatch.setattr(il, "_publish_runtime_state", publish)
     monkeypatch.setattr(il, "_diag", lambda message: events.append(f"diag {message}"))
 
     assert il.main() == 0
     apply_config.assert_not_called()
+    publish.assert_not_called()
+    assert "close lock" not in events
+    assert "discard clicks" not in events
+    assert "flush scroll" not in events
+    assert "flush file" not in events
     shutdown = "diag shutdown requested signal=SIGTERM"
     assert events.count(shutdown) == 1
     assert events.index("install SIGINT") < events.index("load config")
     assert events.index("stop listeners") < events.index(shutdown)
     assert events.index(shutdown) < events.index("restore SIGTERM")
     assert events.index(shutdown) < events.index("restore SIGINT")
+
+
+@pytest.mark.parametrize("startup", ["bad_config", "duplicate", "owns_lock"])
+def test_main_publishes_status_only_after_owning_instance_lock(
+    tmp_path, monkeypatch, isolated_operator_home, startup,
+):
+    from dataclasses import replace
+
+    import operator_controls as controls
+    from config import ConfigError, default_config
+
+    state = controls.write_runtime_state(
+        running=True, manual_paused=True, capture_paused=True, control_revision=17,
+    )
+    assert state.is_relative_to(isolated_operator_home)
+    previous_bytes = state.read_bytes()
+    monkeypatch.setattr(il.os, "umask", lambda _mode: 0o22)
+    monkeypatch.setattr(signal, "getsignal", lambda _signum: object())
+    monkeypatch.setattr(signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(il, "_diag", lambda _message: None)
+    monkeypatch.setattr(il, "_diag_rate_limited", lambda _message: None)
+    cfg = replace(default_config(home=tmp_path), log_dir=tmp_path / "logs")
+
+    def load(*, warn):
+        if startup == "bad_config":
+            raise ConfigError("synthetic invalid config")
+        return cfg
+
+    monkeypatch.setattr(il, "load_config", load)
+    monkeypatch.setattr(il, "acquire_instance_lock", lambda: startup == "owns_lock")
+    close_lock = MagicMock()
+    monkeypatch.setattr(il, "_close_instance_lock", close_lock)
+    flush = MagicMock(return_value=True)
+    marker = MagicMock()
+    monkeypatch.setattr(il, "flush_to_file", flush)
+    monkeypatch.setattr(il, "_append_analysis_marker_locked", marker)
+    monkeypatch.setattr(il, "_initialize_analysis_persistence", MagicMock(side_effect=OSError("synthetic startup fault")))
+
+    assert il.main() == 1
+    if startup == "owns_lock":
+        close_lock.assert_called_once_with()
+        flush.assert_called_once_with()
+        marker.assert_any_call("session_stop", "normal")
+        final_state = controls.read_runtime_state()
+        assert final_state["running"] is False
+        assert final_state["manual_paused"] is True
+        assert final_state["control_revision"] == 0
+        assert state.read_bytes() != previous_bytes
+    else:
+        close_lock.assert_not_called()
+        flush.assert_not_called()
+        marker.assert_not_called()
+        assert state.read_bytes() == previous_bytes

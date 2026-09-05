@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO))
 
 from analysis_view import USER_PRIVATE_OUTPUT_DIR as DEFAULT_OUTPUT_DIR  # noqa: E402
 from config import load_config  # noqa: E402
+from operator_errors import safe_error_message  # noqa: E402
 from operator_controls import (  # noqa: E402
     health_report,
     record_review_outcome,
@@ -38,15 +39,18 @@ def main() -> int:
     commands.add_parser("resume", help="Clear only the manual privacy pause.")
     review = commands.add_parser("review", help="Record a local weekly review outcome.")
     review.add_argument("--week", type=date.fromisoformat, required=True)
+    review.add_argument("--days", type=int, choices=(5, 7), default=None,
+                        help="Exact review window. Omit only for an older outcome with no known window.")
     review.add_argument("--outcome", choices=("accepted", "ignored", "tried"), required=True)
     review.add_argument("--value-result", default="")
     review.add_argument("--notes", default="")
     args = parser.parse_args()
-    log_dir = args.log_dir or load_config().log_dir
     try:
         if args.command == "health":
+            log_dir = args.log_dir or load_config().log_dir
             _print_report(health_report(log_dir, args.day or datetime.now().astimezone().date()))
         elif args.command == "storage":
+            log_dir = args.log_dir or load_config().log_dir
             _print_report(storage_report(log_dir, output_dir=args.output_dir))
         elif args.command in {"pause", "resume"}:
             state = set_manual_pause(args.command == "pause")
@@ -63,11 +67,12 @@ def main() -> int:
                 args.outcome,
                 args.value_result,
                 args.notes,
+                days=args.days,
                 output_dir=args.output_dir,
             )
-            print(f"output={output.name}")
+            print(f"output={output.resolve()}")
     except Exception as exc:
-        print(f"error=operator command failed [{type(exc).__name__}]", file=sys.stderr)
+        print(f"error={safe_error_message(exc)}", file=sys.stderr)
         return 1
     return 0
 
